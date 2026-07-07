@@ -1,0 +1,2039 @@
+<!DOCTYPE html>
+<!-- ===========================================================================
+  Sonde Ground Station — telemetry dashboard for the ESP32-C3 radiosonde.
+  Connects to the GroundReceiver over USB (Web Serial), parses its CSV stream,
+  and renders a map, Skew-T, plots, live telemetry, and a guided radio setup.
+  Single file. Map tiles need internet (Leaflet/OSM); everything else is local.
+  Open in desktop Chrome or Edge.
+============================================================================ -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sonde Ground Station</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --bg:#0a0d12; --panel:#11151c; --panel2:#161b24; --raised:#1b2230;
+    --line:#222a36; --line2:#2c3644;
+    --txt:#e7edf4; --txt2:#9aa7b6; --txt3:#5f6c7b;
+    --accent:#4a9eff; --accent-dim:#2b5d99; --plotbg:#0b0f15;
+    --good:#3fb950; --warn:#d8a23a; --bad:#f0556b;
+    --temp:#ff6b6b; --dew:#46c46a; --therm:#caa24a;
+    --mono:"SFMono-Regular",ui-monospace,"Cascadia Code","Consolas",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  body.light{
+    --bg:#eceff4; --panel:#ffffff; --panel2:#f5f8fc; --raised:#e9eef5;
+    --line:#dce2ec; --line2:#c7d0dd;
+    --txt:#16202e; --txt2:#46535f; --txt3:#7a8696;
+    --accent-dim:#a9cdf5; --plotbg:#ffffff;   /* white canvas backing in light mode */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--txt);font:13px/1.45 var(--sans);
+    height:100vh;display:flex;flex-direction:column;overflow:hidden;
+    -webkit-font-smoothing:antialiased}
+  button,input,select{font-family:inherit}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- Top bar ---- */
+  header{display:flex;align-items:center;gap:14px;height:50px;flex:none;
+    padding:0 14px;background:linear-gradient(180deg,var(--panel),var(--bg));border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .logo{height:34px;width:auto;display:block;border-radius:7px}
+  .brand .brandtxt{display:flex;flex-direction:column;line-height:1}
+  .brand .title{font-size:20px;font-weight:800;letter-spacing:.2px}
+  .brand .title .accent{background:linear-gradient(95deg,var(--accent),#67e8f9);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand .sub{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:2.4px;margin-top:3px}
+  .kpis{display:flex;gap:15px;margin-left:6px;padding-left:14px;border-left:1px solid var(--line)}
+  .kpi{display:flex;flex-direction:column;line-height:1.05}
+  .kpi .l{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px}
+  .kpi .v{font-size:15px;font-weight:600;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kpi .v small{font-size:9px;color:var(--txt2);font-weight:400}
+  .spacer{flex:1}
+  .battchip{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--txt2);padding:0 2px}
+  /* 5-bar signal-strength icon (RSSI-driven) */
+  .sigbars{display:inline-flex;align-items:flex-end;gap:1.5px;height:12px}
+  .sigbars i{width:2.5px;background:var(--line);border-radius:1px;transition:background .3s}
+  .sigbars i:nth-child(1){height:3px} .sigbars i:nth-child(2){height:5px}
+  .sigbars i:nth-child(3){height:7px} .sigbars i:nth-child(4){height:9px}
+  .sigbars i:nth-child(5){height:12px}
+  .sigbars i.on{background:var(--good)} .sigbars.weak i.on{background:var(--warn)} .sigbars.bad i.on{background:var(--bad)}
+  .batticon{position:relative;width:26px;height:13px;border:1.5px solid var(--txt2);border-radius:3px}
+  .batticon::after{content:"";position:absolute;right:-4px;top:3.5px;width:2.5px;height:4px;background:var(--txt2);border-radius:0 2px 2px 0}
+  .batticon i{position:absolute;left:1.5px;top:1.5px;bottom:1.5px;width:0;border-radius:1px;background:var(--good);transition:width .3s,background .3s}
+  .iconbtn{padding:0;width:33px;height:31px;font-size:15px;line-height:1;background:var(--panel2);border:1px solid var(--line2);color:var(--txt2);border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .iconbtn:hover{color:var(--txt);border-color:var(--accent)}
+  .conn{display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:6px;
+    background:var(--panel2);border:1px solid var(--line);font-size:12px;color:var(--txt2)}
+  .conn .dot{width:8px;height:8px;border-radius:50%;background:var(--txt3);transition:.2s}
+  .conn.on .dot{background:var(--good);box-shadow:0 0 8px var(--good)}
+  .conn.on{color:var(--txt)}
+
+  button{background:var(--raised);color:var(--txt);border:1px solid var(--line2);
+    padding:6px 13px;border-radius:6px;cursor:pointer;font-size:12px;transition:.12s}
+  button:hover{background:#222b3a;border-color:#3a4658}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+  button.warnbtn{background:#3a2410;border-color:#6b4416;color:#ffce85}
+  button.warnbtn:hover{background:#4a2e14}
+  button:disabled{opacity:.4;cursor:not-allowed}
+
+  /* ---- Body: sidebar + main ---- */
+  .body{flex:1;display:flex;min-height:0}
+  aside{width:288px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+    overflow:hidden;padding:0;display:flex;flex-direction:column}
+  .grp{padding:5px 14px;border-bottom:1px solid var(--line)}
+  .grp h3{margin:0 0 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;
+    color:var(--txt3);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:0.5px 0;font-size:11.5px;line-height:1.35}
+  .row .k{color:var(--txt2)}
+  .row .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;text-align:right}
+  .row .val small{color:var(--txt3);font-size:10px;font-weight:400}
+  .muted{color:var(--txt3)!important}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+  .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:5px;
+    background:var(--panel2);border:1px solid var(--line);font-size:10.5px;color:var(--txt2)}
+  .chip .d{width:6px;height:6px;border-radius:50%;background:var(--txt3)}
+  .chip.ok .d{background:var(--good)} .chip.ok{color:var(--txt)}
+  .chip.no .d{background:var(--bad)}
+
+  main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+  nav{display:flex;gap:2px;height:42px;flex:none;padding:0 10px;background:var(--panel);
+    border-bottom:1px solid var(--line);align-items:flex-end}
+  nav button{background:none;border:none;border-bottom:2px solid transparent;border-radius:0;
+    padding:0 14px;height:40px;color:var(--txt2);font-size:13px;font-weight:500}
+  nav button:hover{color:var(--txt);background:none}
+  nav button.active{color:var(--txt);border-bottom-color:var(--accent)}
+  nav button.tabdisabled{opacity:.32;pointer-events:none}
+  .flightbtn{font-weight:700;letter-spacing:.3px;border-radius:6px;padding:6px 16px;height:30px;align-self:center;border:1px solid}
+  .flightbtn.red{background:#5a1f27;border-color:#8a2f3b;color:#ffbcc5}
+  .flightbtn.red:hover{background:#732936}
+  .flightbtn.green{background:#1d4a2b;border-color:#2f7043;color:#a6ecbd}
+  .flightbtn.green:hover{background:#245838}
+  /* recording indicator (replaces the old start/stop button) */
+  .recdot{align-self:center;font-size:16px;color:var(--txt3);user-select:none;cursor:default;margin:0 2px}
+  .recdot.on{color:#ff4d5e;animation:recpulse 1.4s ease-in-out infinite}
+  .recdot.done{color:#36c46a}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .views{flex:1;position:relative;min-height:0;min-width:0}
+  .view{position:absolute;inset:0;display:none;overflow:hidden}
+  .view.active{display:flex;flex-direction:column}
+  .pad{padding:12px;flex:1;min-height:0;overflow:auto}
+
+  /* ---- Map ---- */
+  #map{position:absolute;inset:0}
+  #mapFallback{position:absolute;inset:0;display:none}
+  .mapbar{position:absolute;top:10px;right:10px;z-index:500;display:flex;gap:6px}
+  .mapbar button{background:rgba(17,21,28,.9);backdrop-filter:blur(4px)}
+  .leaflet-container{background:#0c1118;font-family:var(--sans)}
+
+  /* ---- Combined Skew-T (left) + Plots (right) ---- */
+  .combo{flex:1;display:flex;gap:10px;padding:10px;min-height:0;min-width:0}
+  .skpane{flex:1.4;display:flex;background:var(--plotbg);border:1px solid var(--line);
+    border-radius:10px;min-width:0;min-height:0}
+  #skewt{flex:1;min-width:0;min-height:0}
+  .ppane{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+  .ptoolbar{display:flex;gap:6px;align-items:center;padding:0 0 8px 2px;flex:none;
+    font-size:11px;color:var(--txt3)}
+  .ptoolbar button{padding:3px 10px;font-size:11px;background:var(--raised);
+    border:1px solid var(--line2);color:var(--txt2);border-radius:5px}
+  .ptoolbar button.active{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:600}
+  .pgrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(3,1fr);
+    gap:8px;min-width:0;min-height:0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:0}
+  .card .head{display:flex;justify-content:space-between;align-items:center;flex:none;
+    padding:5px 11px;border-bottom:1px solid var(--line)}
+  .card .head .t{font-size:11px;font-weight:600;color:var(--txt)}
+  .card .head .now{font-family:var(--mono);font-size:11px;color:var(--txt2);font-variant-numeric:tabular-nums}
+  .card .body{flex:1;min-height:0;padding:4px;background:var(--plotbg)}
+  .card canvas{display:block;width:100%;height:100%}
+  .rpane{flex:1.5;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+  .rtoggle{display:flex;gap:6px;flex:none}
+  .rtoggle button{padding:3px 12px;font-size:11px;background:var(--raised);border:1px solid var(--line2);color:var(--txt2);border-radius:5px;cursor:pointer}
+  .rtoggle button.active{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:600}
+  .rgrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;min-width:0;min-height:0}
+  .hgrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;min-width:0;min-height:0}
+  .tsgrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:10px;min-width:0;min-height:0}
+  .tsgrid .card{min-width:0;min-height:0}
+  .hgrid .battcard{grid-column:1 / 3}
+  /* settings modal rows */
+  .setrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .setrow:last-of-type{border-bottom:none}
+  .setrow label{font-size:13px;color:var(--txt2)}
+  .seg{display:flex;gap:0;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+  .seg button{padding:5px 14px;font-size:12px;background:var(--raised);border:none;color:var(--txt2);border-radius:0;cursor:pointer}
+  .seg button.active{background:var(--accent);color:#04121f;font-weight:600}
+  .rgrid .card,.hgrid .card{min-width:0;min-height:0}
+  .rview[hidden]{display:none}
+  .mapview{flex:1;position:relative;min-width:0;min-height:0;border-radius:10px;overflow:hidden}
+
+  /* ---- Radio ---- */
+  .radio{max-width:760px;margin:0 auto}
+  .statusbar{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+  .statbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  .statbox .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--txt3)}
+  .statbox .big{font-size:20px;font-weight:600;font-family:var(--mono);margin-top:3px}
+  .statbox .sub{font-size:11.5px;color:var(--txt2);margin-top:2px}
+  .step{display:flex;gap:14px;padding:15px 0;border-top:1px solid var(--line)}
+  .step .num{width:26px;height:26px;flex:none;border-radius:50%;background:var(--raised);
+    border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:600;color:var(--txt2)}
+  .step .content{flex:1}
+  .step .content h4{margin:0 0 3px;font-size:14px}
+  .step .content p{margin:0 0 10px;font-size:12.5px;color:var(--txt2);max-width:62ch}
+  .step .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  select.fld,input.fld{background:var(--raised);color:var(--txt);border:1px solid var(--line2);
+    border-radius:6px;padding:7px 10px;font-size:13px}
+  .ok-txt{color:var(--good)} .warn-txt{color:var(--warn)} .bad-txt{color:var(--bad)}
+
+  /* ---- Log ---- */
+  .logwrap{display:flex;flex-direction:column;height:100%;gap:10px}
+  .console{display:flex;gap:8px}
+  .console input{flex:1}
+  #log{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--txt2);background:var(--panel);
+    border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;white-space:pre-wrap}
+  #log .e{color:var(--bad)}
+  /* console: command chips + split message/raw panes */
+  .cmdchips{display:flex;flex-wrap:wrap;gap:6px}
+  .cmdchips button{font-family:var(--mono);font-size:11px;padding:3px 9px;border:1px solid var(--line);
+    background:var(--raised);color:var(--txt2);border-radius:5px;cursor:pointer}
+  .cmdchips button:hover{color:var(--txt);border-color:var(--accent)}
+  .logsplit{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0}
+  .logcol{display:flex;flex-direction:column;min-height:0}
+  .logcolhdr{font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--txt3);margin:0 0 5px}
+  .rawfeed{flex:1;font-family:var(--mono);font-size:11px;color:var(--txt2);background:var(--plotbg);
+    border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;white-space:pre;line-height:1.45}
+  .banner{display:none;background:#3a2410;border:1px solid #6b4416;color:#ffce85;
+    padding:8px 14px;font-size:12.5px}
+
+  /* ---- Pairing modal ---- */
+  .modal{position:fixed;inset:0;background:rgba(2,4,8,.66);backdrop-filter:blur(3px);
+    z-index:1000;display:flex;align-items:center;justify-content:center}
+  .modal-box{background:var(--panel2);border:1px solid var(--line2);border-radius:12px;
+    padding:20px 22px;width:390px;box-shadow:0 24px 70px rgba(0,0,0,.55);animation:pop .14s ease-out}
+  @keyframes pop{from{transform:scale(.96);opacity:.4}to{transform:scale(1);opacity:1}}
+  .modal-box h2{margin:0 0 3px;font-size:17px;display:flex;align-items:center;gap:9px}
+  .modal-box h2 .pulse{width:10px;height:10px;border-radius:50%;background:var(--good);box-shadow:0 0 10px var(--good)}
+  .modal-box .sub{color:var(--txt2);font-size:12.5px;margin-bottom:14px}
+  .pair-info{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px}
+  .pair-info .cell{background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+  .pair-info .cell span{display:block;font-size:9.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.6px}
+  .pair-info .cell b{font-family:var(--mono);font-size:15px}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .pairchip{display:none;align-items:center;gap:6px;padding:5px 11px;border-radius:6px;
+    background:#11331f;border:1px solid #2e6b40;color:#a6ecbd;font-size:12px}
+  .pairchip.on{display:inline-flex}
+
+  /* ---- Analysis ---- */
+  .abar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .aresult{display:flex;gap:14px;align-items:flex-start}
+  .aimg{flex:1;min-width:0;background:#05070b;border:1px solid var(--line);border-radius:10px;
+    min-height:340px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:6px}
+  .aimg img{max-width:100%;max-height:82vh;width:auto;height:auto;object-fit:contain;display:none;cursor:zoom-in}
+  .aimg img[src]{display:block}
+  .aidx{width:300px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  #idxTable{width:100%;border-collapse:collapse;font-size:12.5px}
+  #idxTable td{padding:4px 0;border-bottom:1px solid var(--line)}
+  #idxTable td:first-child{color:var(--txt2)}
+  #idxTable td:last-child{text-align:right;font-family:var(--mono);font-weight:600}
+  .empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--txt3);font-size:13px}
+
+  /* ---- Flight Sim (dropdown panel over the Map tab) ---- */
+  .simpanel{position:absolute;top:48px;right:10px;z-index:600;width:346px;
+    max-height:calc(100% - 60px);overflow:auto;background:var(--panel2);
+    border:1px solid var(--line2);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.55);
+    padding:11px;display:none}
+  .simpanel.open{display:block}
+  .simpanel .simcard{margin-bottom:9px}
+  .simpanel .simcard:last-child{margin-bottom:0}
+  #simToggle.open{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:600}
+  .simcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .simcard h3{margin:0 0 9px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--txt3);font-weight:600}
+  .frow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .frow label{flex:none;width:108px;color:var(--txt2);font-size:12px}
+  .frow input.fld,.frow select.fld{flex:1;min-width:0;padding:6px 9px;font-size:12.5px}
+  .frow .unit{flex:none;color:var(--txt3);font-size:11px;width:34px}
+  .frow.split{gap:6px}
+  .simbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .simnote{font-size:11.5px;color:var(--txt2);margin-top:8px;min-height:16px}
+  .simnote.err{color:var(--bad)}
+  .reslist .row{padding:2px 0;font-size:12.5px}
+  .reslist .row .val{font-size:13px}
+  .reslist .big{font-size:17px;font-weight:600;font-family:var(--mono);color:var(--accent)}
+  .windtbl{width:100%;border-collapse:collapse;font-size:11.5px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .windtbl th{color:var(--txt3);font-weight:600;text-align:right;padding:3px 8px;border-bottom:1px solid var(--line2);font-size:10px;text-transform:uppercase;letter-spacing:.4px}
+  .windtbl th:first-child{text-align:left}
+  .windtbl td{padding:2px 8px;border-bottom:1px solid var(--line);text-align:right;color:var(--txt)}
+  .windtbl td:first-child{text-align:left;color:var(--txt2)}
+  .windtbl tr.measured td{color:var(--good)}
+  .windwrap{max-height:300px;overflow:auto}
+  .legdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .pickactive{background:var(--accent)!important;border-color:var(--accent)!important;color:#04121f!important;font-weight:600}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <img src="truck.png" alt="logo" class="logo">
+    <div class="brandtxt"><span class="title">PTH<span class="accent">Sonde</span></span><span class="sub">Ground Station</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><span class="l">Altitude</span><span class="v"><span id="kAlt">--</span> <small>m</small></span></div>
+    <div class="kpi"><span class="l">Climb</span><span class="v"><span id="kVs">--</span> <small>m/s</small></span></div>
+    <div class="kpi"><span class="l">Speed</span><span class="v"><span id="kSpd">--</span> <small>m/s</small></span></div>
+    <div class="kpi"><span class="l">RSSI</span><span class="v"><span id="kRssi">--</span> <small>dBm</small></span></div>
+    <div class="kpi"><span class="l">SNR</span><span class="v"><span id="kSnr">--</span> <small>dB</small></span></div>
+    <div class="kpi"><span class="l">Packets</span><span class="v" id="kPkts">0</span></div>
+  </div>
+  <div class="spacer"></div>
+  <span class="pairchip" id="pairedBadge"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--good)"></span><span id="pairedTxt">Paired</span></span>
+  <span class="conn" id="conn"><span class="dot"></span><span id="connTxt">Disconnected</span></span>
+  <select id="portSel" class="fld" title="Serial port" style="padding:6px 8px;max-width:200px"></select>
+  <select id="baud" class="fld" title="Baud" style="padding:6px 8px">
+    <option>115200</option><option>921600</option><option>57600</option><option>9600</option>
+  </select>
+  <button id="connectBtn" class="primary">Connect</button>
+  <button id="demoBtn" style="display:none">Demo</button>
+  <button id="fsBtn" class="iconbtn" title="Fullscreen">⛶</button>
+  <button id="settingsBtn" class="iconbtn" title="Settings">⚙</button>
+</header>
+
+<div id="settingsModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <h2>Settings</h2>
+    <div class="sub">Preferences are saved in this browser.</div>
+    <div class="setrow"><label>Appearance</label>
+      <div class="seg" id="themeSeg"><button data-theme="dark" class="active">Dark</button><button data-theme="light">Light</button></div></div>
+    <div class="setrow"><label>Save flights to</label>
+      <input id="setSaveDir" class="fld mono" style="flex:1;max-width:230px;padding:6px 9px" placeholder="Documents\PTHSonde"></div>
+    <div class="setrow"><label>Battery capacity (CR123A)</label>
+      <span style="display:flex;align-items:center;gap:6px"><input id="setBattMah" class="fld mono" type="number" step="50" style="width:90px;padding:6px 9px"><small style="color:var(--txt3)">mAh</small></span></div>
+    <div class="setrow"><label>Map auto-follow sonde</label>
+      <div class="seg" id="followSeg"><button data-follow="1" class="active">On</button><button data-follow="0">Off</button></div></div>
+    <div class="setrow"><label>Power-user tools</label>
+      <div class="seg" id="powerSeg"><button data-power="1">On</button><button data-power="0" class="active">Off</button></div></div>
+    <div class="setrow"><label>Radio &amp; channel setup</label>
+      <button id="openRadioBtn">Open Radio Setup…</button></div>
+    <div class="modalbtns" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button id="setClose" class="primary">Done</button></div>
+  </div>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<div class="body">
+  <!-- ================= SIDEBAR (always-on live telemetry) ================= -->
+  <aside>
+    <div class="grp">
+      <h3>Link <span style="display:flex;align-items:center;gap:8px"><span id="lastPkt" class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;min-width:52px;text-align:right">—</span><span class="sigbars" id="sigBars" title="Signal strength (RSSI)"><i></i><i></i><i></i><i></i><i></i></span></span></h3>
+      <div class="row"><span class="k">Sonde ID</span><span class="val" id="vSid">--</span></div>
+      <div class="row"><span class="k">Sequence</span><span class="val" id="vSeq">--</span></div>
+      <div class="row"><span class="k">Packets</span><span class="val" id="vPkts">0</span></div>
+      <div class="row"><span class="k">Seq gaps</span><span class="val" id="vGaps">0</span></div>
+      <div class="row"><span class="k">CRC errors</span><span class="val" id="vCrc">0</span></div>
+      <div class="row"><span class="k">Loss</span><span class="val" id="vLoss">0.0 <small>%</small></span></div>
+    </div>
+    <div class="grp">
+      <h3>Signal</h3>
+      <div class="row"><span class="k">RSSI</span><span class="val" id="vRssi">--</span></div>
+      <div class="row"><span class="k">Noise floor</span><span class="val" id="vNoise">--</span></div>
+      <div class="row"><span class="k">SNR</span><span class="val" id="vSnr">--</span></div>
+      <div class="row"><span class="k">Channel</span><span class="val" id="vChan">--</span></div>
+    </div>
+    <div class="grp">
+      <h3>GPS</h3>
+      <div class="row"><span class="k">Fix / PPS</span><span class="val" id="vFix">--</span></div>
+      <div class="row"><span class="k">Satellites</span><span class="val" id="vSats">--</span></div>
+      <div class="row"><span class="k">UTC</span><span class="val" id="vUtc">--</span></div>
+      <div class="row"><span class="k">Latitude</span><span class="val" id="vLat">--</span></div>
+      <div class="row"><span class="k">Longitude</span><span class="val" id="vLon">--</span></div>
+      <div class="row"><span class="k">GPS alt</span><span class="val" id="vAlt">--</span></div>
+      <div class="row"><span class="k">Pressure alt</span><span class="val" id="vPalt">--</span></div>
+      <div class="row"><span class="k">Ascent rate</span><span class="val" id="vVs">--</span></div>
+      <div class="row"><span class="k">Ground speed</span><span class="val" id="vSpd">--</span></div>
+      <div class="row"><span class="k">Course</span><span class="val" id="vCrs">--</span></div>
+    </div>
+    <div class="grp">
+      <h3>Atmosphere</h3>
+      <div class="row"><span class="k">Temperature</span><span class="val" id="vT">--</span></div>
+      <div class="row"><span class="k muted">SHT temp</span><span class="val muted" id="vSht">--</span></div>
+      <div class="row"><span class="k">Humidity</span><span class="val" id="vRH">--</span></div>
+      <div class="row"><span class="k">Dewpoint</span><span class="val" id="vDew">--</span></div>
+      <div class="row"><span class="k">Pressure</span><span class="val" id="vPress">--</span></div>
+      <div class="row"><span class="k">Wind</span><span class="val" id="vWind">--</span></div>
+    </div>
+    <div class="grp">
+      <h3>Power <span class="battchip" id="battChip" title="Battery (coulomb estimate)"><span class="batticon"><i id="battFill"></i></span><span id="battChipTxt">--</span></span></h3>
+      <div class="row"><span class="k">Battery</span><span class="val" id="vBatt">--</span></div>
+      <div class="row"><span class="k">Current</span><span class="val" id="vCurr">--</span></div>
+      <div class="row"><span class="k">Power</span><span class="val" id="vPwr">--</span></div>
+    </div>
+    <div class="grp">
+      <h3>Sensors</h3>
+      <div class="chips" id="chips"></div>
+    </div>
+  </aside>
+
+  <!-- ====================== MAIN (tabbed views) ====================== -->
+  <main>
+    <nav>
+      <button data-tab="profile" class="active">Skew-T + Plots</button>
+      <button data-tab="analysis">Analysis</button>
+      <button data-tab="log">Console</button>
+      <div class="spacer"></div>
+      <span id="recDot" class="recdot" title="recording state">●</span>
+      <button id="stopFlightBtn" class="warnbtn" style="display:none">■ Stop Flight</button>
+      <button id="importBtn" style="border:none;color:var(--txt3)">Import CSV</button>
+      <button id="clearBtn" style="border:none;color:var(--txt3)">Clear</button>
+      <input id="importFile" type="file" accept=".csv,text/csv" style="display:none">
+    </nav>
+    <div class="views">
+      <!-- SKEW-T + PLOTS (first tab) -->
+      <section class="view active" data-view="profile">
+        <div class="combo">
+          <div class="skpane"><canvas id="skewt"></canvas></div>
+          <div class="rpane">
+            <div class="rtoggle">
+              <button data-rview="sounding" class="active">Sounding</button>
+              <button data-rview="timeseries">Time Series</button>
+              <button data-rview="health">System Health</button>
+              <button data-rview="map">Map</button>
+            </div>
+            <div class="rgrid rview" data-rv="sounding">
+              <div class="card"><div class="head"><span class="t">Hodograph (m/s · avg)</span><span class="now" id="nHodo">--</span></div><div class="body"><canvas id="hodo"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Wind speed (m/s)</span><span class="now" id="nW">--</span></div><div class="body"><canvas id="windProf"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Potential temp θ (K)</span><span class="now" id="nTh">--</span></div><div class="body"><canvas id="thProf"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Relative humidity (%)</span><span class="now" id="nRH">--</span></div><div class="body"><canvas id="rhProf"></canvas></div></div>
+            </div>
+            <div class="tsgrid rview" data-rv="timeseries" hidden>
+              <div class="card"><div class="head"><span class="t">Temperature vs time (°C)</span><span class="now" id="tnT">--</span></div><div class="body"><canvas id="tsTemp"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Ascent rate vs time (m/s)</span><span class="now" id="tnA">--</span></div><div class="body"><canvas id="tsAsc"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Wind speed vs time (m/s)</span><span class="now" id="tnW">--</span></div><div class="body"><canvas id="tsWind"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Dewpoint vs time (°C)</span><span class="now" id="tnD">--</span></div><div class="body"><canvas id="tsDew"></canvas></div></div>
+            </div>
+            <div class="hgrid rview" data-rv="health" hidden>
+              <div class="card battcard"><div class="head"><span class="t">Battery — pack voltage</span><span class="now" id="hnBatt">--</span></div><div class="body"><canvas id="hBatt"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Radio link — signal vs noise (dBm)</span><span class="now" id="hnRssi">--</span></div><div class="body"><canvas id="hRssi"></canvas></div></div>
+              <div class="card"><div class="head"><span class="t">Packets — received vs lost</span><span class="now" id="hnPkt">--</span></div><div class="body"><canvas id="hPkt"></canvas></div></div>
+            </div>
+            <div class="rview mapview" data-rv="map" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MAP (with the Flight Sim dropdown panel) -->
+      <section class="view" data-view="map">
+        <div id="map"></div>
+        <canvas id="mapFallback"></canvas>
+        <div class="mapbar">
+          <button id="simToggle">▾ Flight Sim</button>
+          <button id="followBtn" class="primary">Follow</button>
+        </div>
+
+        <div id="simPanel" class="simpanel">
+          <div class="simcard">
+            <h3>Launch</h3>
+            <div class="frow"><label>Latitude</label><input id="simLat" class="fld mono" type="number" step="0.0001" placeholder="39.7392"><span class="unit">°</span></div>
+            <div class="frow"><label>Longitude</label><input id="simLon" class="fld mono" type="number" step="0.0001" placeholder="-104.9903"><span class="unit">°</span></div>
+            <div class="simbtns">
+              <button id="simUseSonde">Use sonde position</button>
+              <button id="simPick">Pick on map</button>
+            </div>
+            <div class="frow" style="margin-top:10px"><label>Launch time (UTC)</label><input id="simTime" class="fld mono" type="datetime-local"></div>
+            <div class="frow"><label>Launch elev</label><input id="simElev" class="fld mono" type="number" step="1" value="1600"><span class="unit">m</span></div>
+          </div>
+
+          <div class="simcard">
+            <h3>Balloon &amp; payload</h3>
+            <div class="frow"><label>Ascent rate</label><input id="simAsc" class="fld mono" type="number" step="0.1" value="5"><span class="unit">m/s</span></div>
+            <div class="frow"><label>Burst altitude</label><input id="simBurst" class="fld mono" type="number" step="500" value="30000"><span class="unit">m</span></div>
+            <div class="frow"><label>Payload mass</label><input id="simMass" class="fld mono" type="number" step="1" value="75"><span class="unit">g</span></div>
+            <div class="frow"><label>Chute diameter</label><input id="simChute" class="fld mono" type="number" step="1" value="30"><span class="unit">cm</span></div>
+            <div class="frow"><label>Drag coeff (Cd)</label><input id="simCd" class="fld mono" type="number" step="0.1" value="1.5"><span class="unit"></span></div>
+            <div class="simnote" id="simDescNote">descent —</div>
+          </div>
+
+          <div class="simcard">
+            <div class="simbtns">
+              <button id="simRun" class="primary">Fetch GFS + Predict</button>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2)">
+                <input id="simAuto" type="checkbox" checked> Auto-update in flight</label>
+            </div>
+            <div class="simnote" id="simStatus">Set a launch point and time, then predict.</div>
+          </div>
+
+          <div class="simcard">
+            <h3>Predicted landing</h3>
+            <div class="reslist">
+              <div class="row"><span class="k">Landing</span><span class="val big" id="rLand">--</span></div>
+              <div class="row"><span class="k">Distance / bearing</span><span class="val" id="rDist">--</span></div>
+              <div class="row"><span class="k">Max altitude (burst)</span><span class="val" id="rBurst">--</span></div>
+              <div class="row"><span class="k">Time to burst</span><span class="val" id="rTtb">--</span></div>
+              <div class="row"><span class="k">Descent duration</span><span class="val" id="rDesc">--</span></div>
+              <div class="row"><span class="k">Total flight time</span><span class="val" id="rTot">--</span></div>
+              <div class="row"><span class="k">Landing ETA (UTC)</span><span class="val" id="rEta">--</span></div>
+              <div class="row" style="border-top:1px solid var(--line);margin-top:4px;padding-top:5px"><span class="k">Baseline (initial GFS)</span><span class="val" id="rBase">--</span></div>
+              <div class="row"><span class="k">Shift from baseline</span><span class="val" id="rShift">--</span></div>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);margin-top:8px">
+              <input id="simShowBase" type="checkbox" checked> Show baseline (initial GFS) on map</label>
+            <div class="simnote" style="margin-top:6px">
+              <span class="legdot" style="background:#22d3ee"></span>ascent &nbsp;
+              <span class="legdot" style="background:#f5a623"></span>descent &nbsp;
+              <span class="legdot" style="background:#f0556b"></span>landing &nbsp;
+              <span class="legdot" style="background:#7c8aa0"></span>initial GFS
+            </div>
+          </div>
+
+          <div class="simcard">
+            <h3>Winds aloft (GFS) <span id="windSrc" style="float:right;text-transform:none;letter-spacing:0;color:var(--txt3)"></span></h3>
+            <div class="windwrap">
+              <table class="windtbl"><thead><tr><th>Level</th><th>Alt (m)</th><th>Dir</th><th>Speed</th></tr></thead>
+              <tbody id="windBody"><tr><td colspan="4" class="muted" style="text-align:center">No GFS data fetched yet.</td></tr></tbody></table>
+            </div>
+            <div class="simnote"><span class="legdot" style="background:var(--good)"></span>green rows = sonde-measured winds (override GFS during flight)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RADIO SETUP -->
+      <div id="radioModal" class="modal" style="display:none">
+        <div class="modal-box" style="max-width:720px;max-height:88vh;overflow:auto;text-align:left">
+        <h2><span class="pulse" style="background:var(--accent)"></span>Radio Setup</h2>
+        <div class="radio">
+          <div class="statusbar">
+            <div class="statbox">
+              <div class="lbl">Receiver (this ground station)</div>
+              <div class="big" id="rxChBig">ch -- </div>
+              <div class="sub" id="rxChSub">Tune this to match the sonde.</div>
+            </div>
+            <div class="statbox">
+              <div class="lbl">Sonde (reported over the air)</div>
+              <div class="big" id="sondeChBig">ch --</div>
+              <div class="sub" id="sondeState">No telemetry yet.</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="num">1</div>
+            <div class="content">
+              <h4>Choose a frequency</h4>
+              <p>Pick a channel in the 902–928 MHz band. Both the sonde and receiver must end up
+                 on the same one. Band-center (915 MHz) is a good default.</p>
+              <div class="actions"><select id="chSel" class="fld"></select></div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="num">2</div>
+            <div class="content">
+              <h4>Tune the receiver</h4>
+              <p>Sets the channel <em>this ground station</em> listens on. Telemetry only appears
+                 when the receiver is on the same channel as the sonde.</p>
+              <div class="actions"><button id="btnRxCh" class="primary">Tune receiver to selected</button></div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="num">3</div>
+            <div class="content">
+              <h4>Send the channel to the sonde (pre-launch)</h4>
+              <p>Over-the-air command — the sonde must be powered on and nearby. It keeps
+                 transmitting on the control channel but <em>stages</em> the new one, then reports it
+                 back so you can confirm before committing.</p>
+              <div class="actions"><button id="btnStage">Stage on sonde</button>
+                <span id="stageStatus" class="sub" style="color:var(--txt2)"></span></div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="num">4</div>
+            <div class="content">
+              <h4>Lock &amp; launch</h4>
+              <p>Final step. The sonde switches to the staged channel and <em>stops listening for
+                 commands</em> for the rest of the flight (clears only on power-cycle). The receiver
+                 follows automatically.</p>
+              <div class="actions"><button id="btnLock" class="warnbtn">Lock &amp; Launch</button></div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="num">?</div>
+            <div class="content">
+              <h4>Lost the sonde / don't know its channel?</h4>
+              <p>Sweeps the whole band listening for any valid packet and locks onto whatever
+                 channel it finds. Use this on recovery day or if a launch went sideways.</p>
+              <div class="actions"><button id="btnScan">Scan band</button>
+                <button id="btnPing">Ping link</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions" style="margin-top:10px"><button id="radioClose" class="primary">Done</button></div>
+        </div>
+      </div>
+
+      <!-- ANALYSIS -->
+      <section class="view" data-view="analysis">
+        <div class="pad">
+          <div class="abar">
+            <button id="processBtn" class="primary">Process Flight → indices + SHARPpy panel</button>
+            <span id="flightStatus" class="sub" style="color:var(--txt2)">End a flight (top button) or run Demo, then process it here.</span>
+          </div>
+          <div class="aresult">
+            <div class="aimg"><img id="skewtImg" alt="Run 'Process Flight' to generate the sounding."><div id="aimgEmpty" class="empty">No sounding processed yet.</div></div>
+            <div class="aidx">
+              <h3 style="margin:0 0 8px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--txt3)">SHARPpy indices</h3>
+              <table id="idxTable"><tbody></tbody></table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CONSOLE -->
+      <section class="view" data-view="log">
+        <div class="pad logwrap">
+          <div class="console">
+            <input id="cmdInput" class="fld" placeholder="Type a receiver command — e.g. REG, CFG, RXCH 70  (Enter to send)">
+            <button id="cmdSend">Send</button>
+          </div>
+          <div class="cmdchips" id="cmdChips"></div>
+          <div class="logsplit">
+            <div class="logcol"><div class="logcolhdr">Messages</div><div id="log"></div></div>
+            <div class="logcol"><div class="logcolhdr">Raw data in <span id="rawCount" class="muted"></span></div><div id="rawFeed" class="rawfeed"></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- Sonde pairing modal -->
+<div id="pairModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <h2><span class="pulse"></span>Sonde Detected</h2>
+    <div class="sub">A radiosonde is transmitting on the linked channel. Pair to track it.</div>
+    <div class="pair-info">
+      <div class="cell"><span>Sonde ID</span><b id="pmId">--</b></div>
+      <div class="cell"><span>Signal</span><b id="pmRssi">--</b></div>
+      <div class="cell"><span>Channel</span><b id="pmCh">--</b></div>
+      <div class="cell"><span>Satellites</span><b id="pmSats">--</b></div>
+    </div>
+    <div class="fcrow" style="margin-bottom:6px"><label>Flight freq</label>
+      <select id="pmFreq" class="fld" style="flex:1"></select></div>
+    <div class="fcrow" style="margin-bottom:6px"><label>Save flight to</label>
+      <input id="pmSaveDir" class="fld mono" style="flex:1;padding:6px 9px" placeholder="Documents\PTHSonde"></div>
+    <div class="note" id="pmNote">Pairing starts recording telemetry to a new flight folder at the path above.
+      Pick a flight frequency to stage it on the sonde (switches at Lock &amp; Launch).</div>
+    <div class="modal-actions">
+      <button id="pmIgnore">Not now</button>
+      <button id="pmPair" class="primary">Pair &amp; Record</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+// ============================================================================
+//  CSV column layout (matches GroundReceiver CsvOutput). Header is re-read live.
+// ============================================================================
+const DEFAULT_COLS=["rx_ms","sonde_id","seq","seq_gap","pkt_count","proto","uptime_s",
+  "gps_fix","pps","sats","utc_date","utc_time","lat_deg","lon_deg","alt_m","speed_mps","course_deg",
+  "sht_temp_c","sht_rh_pct","ms_press_pa","ms_temp_c","mcp_raw","therm_temp_c","wind_deg",
+  "batt_v","current_ma","power_mw","status_flags","valid_flags",
+  "v_sht","v_ms","v_mcp","v_ina","v_therm","v_wind","v_gps",
+  "rssi_dbm","noise_dbm","snr_db","sonde_ch","locked","crc_ok"];
+let colMap={}; DEFAULT_COLS.forEach((n,i)=>colMap[n]=i);
+
+// ---- State -----------------------------------------------------------------
+const data=[], rawLines=[];
+let headerLine=DEFAULT_COLS.join(",");
+let keepReading=false;         // true while we're polling the server for serial lines
+let paused=false,demoTimer=null,activeTab="profile",followMap=true;
+let pktCount=0,crcErrors=0,totalGaps=0,lastSeq=null,firstSeq=null,lastPktMs=0;
+let rxChannel=null,launchHpa=null,plotMode="time";  // time | altY (profile)
+let rView="sounding";                               // right pane: sounding | health
+let pairedId=null, pairDismissed=new Set(), pmDetId=null, pmDetCh=null, pairOpen=false;
+const MAX_POINTS=60000;
+const CH_MIN=52,CH_MAX=77;
+
+// ---- Recording: data is saved to disk automatically whenever it's flowing.
+// No start button. Saving begins on the first packet and stops only when the
+// user Processes the flight (which prompts to end it). Clear arms a new flight.
+let importing=false;                 // suppress saving while replaying an imported file
+let flightDone=false;                // flight processed/ended; saving paused until Clear
+let flightStarting=false;            // guard: create the disk folder only once
+let flightArmed=false;               // user paired & chose to record -> gates auto-save
+let powerUser=false;                 // power-user tools (Demo) visible when true
+let SAVE_DEFAULT="";                 // server's default save folder (Documents\PTHSonde)
+const $=id=>document.getElementById(id);
+
+// ============================================================================
+//  Serial — the Python server owns the COM port (pyserial). The dashboard just
+//  opens/closes it over HTTP and polls for buffered lines. This is robust: the
+//  server keeps reading + auto-reconnects even if this page is reloaded/idle.
+// ============================================================================
+let rxSince=null;                    // server line index we've consumed up to
+
+async function refreshPorts(){
+  try{
+    const j=await fetch(PROC+"/serial/ports").then(r=>r.json());
+    const sel=$("portSel"); if(!sel) return [];
+    const cur=sel.value; sel.innerHTML="";
+    let pick=null;
+    (j.ports||[]).forEach(p=>{
+      const o=document.createElement("option"); o.value=p.device;
+      o.textContent=p.device+(p.desc?(" · "+p.desc):"");
+      if(!pick && /USB|CP210|CH34|Serial|CDC|ACM|UART/i.test(p.desc||"")) pick=p.device;
+      sel.appendChild(o);
+    });
+    if(cur && [...sel.options].some(o=>o.value===cur)) sel.value=cur;
+    else if(pick) sel.value=pick;
+    return j.ports||[];
+  }catch(e){ return []; }
+}
+
+async function connect(){
+  const sel=$("portSel");
+  if(sel && !sel.options.length) await refreshPorts();
+  const portDev = sel ? sel.value : "";
+  if(!portDev){ banner("No serial port found. Plug in the receiver, then Connect. (Is the server running?)"); return; }
+  const baud=parseInt($("baud").value,10)||115200;
+  try{
+    const j=await fetch(PROC+"/serial/open",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({port:portDev,baud})}).then(r=>r.json());
+    keepReading=true; rxSince=null;
+    $("connectBtn").textContent="Disconnect";
+    if(j.connected){ setConn(true,"Connected · "+portDev); log("Opened "+portDev+" @ "+baud+"."); }
+    else { setConn(true,"Reconnecting…"); log("Opening "+portDev+" — "+(j.error||"waiting for device")+"…",true); }
+    pollSerial();
+  }catch(e){ log("Connect failed — is the server running?  "+e.message,true); banner("Can't reach the local server. It should start with the app."); }
+}
+
+async function disconnect(){
+  keepReading=false;
+  try{ await fetch(PROC+"/serial/close",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); }catch(e){}
+  setConn(false,"Disconnected"); $("connectBtn").textContent="Connect";
+  pairedId=null; pairDismissed.clear(); updatePairedBadge(); closePair();
+  log("Serial closed.");
+}
+
+async function sendSerial(text){
+  try{
+    const j=await fetch(PROC+"/serial/send",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text})}).then(r=>r.json());
+    if(j && j.error) log("Send failed: "+j.error,true); else log("› "+text);
+  }catch(e){ log("Send failed: "+e.message,true); }
+}
+
+// Poll the server for new serial lines and feed them to the same parser as before.
+async function pollSerial(){
+  while(keepReading){
+    try{
+      const u=PROC+"/serial/poll"+(rxSince!=null?("?since="+rxSince):"");
+      const j=await fetch(u).then(r=>r.json());
+      if(j){
+        if(typeof j.next==="number") rxSince=j.next;
+        if(j.lines && j.lines.length){ for(const ln of j.lines) handleLine(ln); }
+        if(j.connected) setConn(true,"Connected · "+(j.port||""));
+        else setConn(true,"Reconnecting…");   // server is retrying the port
+      }
+    }catch(e){
+      setConn(false,"Server offline");   // the local server itself is unreachable
+    }
+    await new Promise(r=>setTimeout(r,600));
+  }
+}
+
+// ============================================================================
+//  Parsing
+// ============================================================================
+function handleLine(line){
+  line=line.trim(); if(!line) return;
+  rawFeedPush(line);                       // mirror every incoming line into the Console raw feed
+  if(line.startsWith("#")){
+    log(line);
+    if(/CORRUPT/i.test(line)){ crcErrors++; }
+    const m=line.match(/#\s*RXCH\s+(\d+)\s+([\d.]+)/i);
+    if(m){ rxChannel=parseInt(m[1],10); updateRadio(); }
+    return;
+  }
+  if(line.startsWith("rx_ms")){
+    headerLine=line; const p=line.split(","); colMap={}; p.forEach((n,i)=>colMap[n.trim()]=i);
+    log("CSV header received ("+p.length+" cols)."); return;
+  }
+  const cells=line.split(","); if(cells.length<10) return;
+  rawLines.push(line);
+  const r=parseRecord(cells); if(r) ingest(r);
+  saveLine(line);
+}
+function cell(c,n){ const i=colMap[n]; return (i==null||i>=c.length)?null:c[i]; }
+function num(c,n){ const v=cell(c,n); if(v==null||v===""||v==="NA") return null; const x=Number(v); return isNaN(x)?null:x; }
+function parseRecord(c){
+  const r={
+    rxMs:num(c,"rx_ms"), sondeId:cell(c,"sonde_id"), seq:num(c,"seq"),
+    gap:num(c,"seq_gap")||0, pktCount:num(c,"pkt_count"), proto:num(c,"proto"),
+    fix:num(c,"gps_fix"), pps:num(c,"pps"), sats:num(c,"sats"),
+    date:cell(c,"utc_date"), time:cell(c,"utc_time"),
+    lat:num(c,"lat_deg"), lon:num(c,"lon_deg"), alt:num(c,"alt_m"),
+    speed:num(c,"speed_mps"), course:num(c,"course_deg"),
+    shtT:num(c,"sht_temp_c"), shtRH:num(c,"sht_rh_pct"),
+    msP:num(c,"ms_press_pa"), thermT:num(c,"therm_temp_c"), windDeg:num(c,"wind_deg"),
+    battV:num(c,"batt_v"), curr:num(c,"current_ma"), pwr:num(c,"power_mw"),
+    statusFlags:num(c,"status_flags"), validFlags:num(c,"valid_flags"),
+    vsht:num(c,"v_sht"),vms:num(c,"v_ms"),vmcp:num(c,"v_mcp"),vina:num(c,"v_ina"),
+    vtherm:num(c,"v_therm"),vwind:num(c,"v_wind"),vgps:num(c,"v_gps"),
+    rssi:num(c,"rssi_dbm"), noise:num(c,"noise_dbm"), snr:num(c,"snr_db"),
+    sondeCh:num(c,"sonde_ch"), locked:num(c,"locked"),
+  };
+  r.tSec=(r.rxMs!=null?r.rxMs/1000:Date.now()/1000);
+  r.pHpa=(r.vms?r.msP/100:null);
+  r.dew=(r.vsht&&r.shtT!=null&&r.shtRH!=null)?dewpoint(r.shtT,r.shtRH):null;
+  if(!r.vtherm) r.thermT=null;   // thermistor = primary temp; null if invalid
+  if(!r.vsht) r.shtT=null;       // SHT = secondary
+  return r;
+}
+function dewpoint(T,RH){ if(RH<=0)return null; const a=17.625,b=243.04;
+  const g=Math.log(RH/100)+(a*T)/(b+T); return (b*g)/(a-g); }
+function pressureAltitude(hPa){ if(hPa==null||hPa<=0)return null; return 44330*(1-Math.pow(hPa/1013.25,0.190284)); }
+
+function ingest(r){
+  if(firstSeq==null) firstSeq=r.seq;
+  if(r.seq!=null) lastSeq=r.seq;
+  totalGaps+=(r.gap||0);
+  pktCount=(r.pktCount!=null?r.pktCount:pktCount+1);
+  lastPktMs=performance.now();
+  if(launchHpa==null&&r.pHpa!=null) launchHpa=r.pHpa;
+  // vertical speed from barometric altitude vs the previous record
+  const prev=data.length?data[data.length-1]:null;
+  r.vs=null;
+  if(prev){ const za=pressureAltitude(prev.pHpa),zb=pressureAltitude(r.pHpa),dt=r.tSec-prev.tSec;
+    if(za!=null&&zb!=null&&dt>0) r.vs=(zb-za)/dt; }
+  data.push(r); if(data.length>MAX_POINTS) data.shift();
+  if(!paused) requestRender();
+}
+
+// Smoothed ascent rate (m/s) from barometric pressure altitude — averages the
+// per-record vertical speeds over ~the last 12 s so the live readout isn't jumpy.
+function climbNow(){
+  if(data.length<2) return null;
+  const tEnd=data[data.length-1].tSec; let s=0,c=0;
+  for(let i=data.length-1;i>=0;i--){ const r=data[i];
+    if(r.tSec==null) continue;
+    if(tEnd!=null && tEnd-r.tSec>12) break;
+    if(r.vs!=null){ s+=r.vs; c++; } }
+  return c?s/c:null;
+}
+// [tSec, smoothed-vs] series for the time-series tab (9-pt centered average).
+function climbSeries(){
+  const raw=[]; for(const r of data){ if(r.tSec==null||r.vs==null) continue; raw.push([r.tSec,r.vs]); }
+  return rollAvg(raw,9);
+}
+
+// ---- Launch detection -------------------------------------------------------
+// On the pad the T/RH sensors are heat-soaked and erratic; those ground rows
+// wreck the surface parcel (SBCAPE/LCL/lifted values). Find the launch = the
+// first of 4 consecutive rising samples (pressure dropping).
+const LAUNCH_RUN=4, LAUNCH_DROP=0.2;   // hPa/step ~ 1.7 m of rise
+function launchIndex(){
+  let run=0, start=null, prevP=null, prevI=null;
+  for(let i=0;i<data.length;i++){ const p=data[i].pHpa; if(p==null) continue;
+    if(prevP!=null && p < prevP-LAUNCH_DROP){ if(run===0) start=prevI; run++;
+      if(run>=LAUNCH_RUN) return start; }
+    else run=0, start=null;
+    prevP=p; prevI=i; }
+  return null;   // no sustained ascent yet
+}
+// ---- Thermal-soak trim ------------------------------------------------------
+// After launch the sensor keeps shedding pad heat for the first stretch of the
+// climb — a non-physical superadiabatic warm nose. Fit the REAL lapse rate from
+// the clean free atmosphere (800–3500 m above launch), extrapolate it down, and
+// drop the contiguous bottom rows still sitting > tol°C above that clean line.
+// Falls back to the plain launch index until enough clean data exists.
+function soakStart(){
+  const li=launchIndex(); if(li==null) return null;
+  const z0=pressureAltitude(data[li].pHpa); if(z0==null) return li;
+  const Tof=r=>(r.thermT!=null?r.thermT:r.shtT);
+  let sx=0,sy=0,sxx=0,sxy=0,m=0;
+  for(let i=li;i<data.length;i++){ const z=pressureAltitude(data[i].pHpa),t=Tof(data[i]);
+    if(z==null||t==null) continue; const dz=z-z0; if(dz<800||dz>3500) continue;
+    sx+=z;sy+=t;sxx+=z*z;sxy+=z*t;m++; }
+  if(m<12) return li;                          // not enough clean data yet
+  const den=m*sxx-sx*sx; if(den===0) return li;
+  const slope=(m*sxy-sx*sy)/den, inter=(sy-slope*sx)/m, gamma=-slope*1000;
+  if(gamma<=0||gamma>12) return li;            // not a sane lapse -> pad trim only
+  let cut=li, clean=0;
+  for(let i=li;i<data.length;i++){ const z=pressureAltitude(data[i].pHpa),t=Tof(data[i]);
+    if(z==null||t==null) continue;
+    if(z-z0>2500) break;
+    if(t>(inter+slope*z)+1.5){ cut=i+1; clean=0; }
+    else { clean++; if(clean>=3) break; } }
+  return cut;
+}
+// Records from the soak top onward (empty until a real ascent is detected).
+function profileData(){ const s=soakStart(); return s==null ? [] : data.slice(s); }
+
+// ============================================================================
+//  Helpers / formatting
+// ============================================================================
+function fmt(v,d=1){ return (v==null||isNaN(v))?"--":Number(v).toFixed(d); }
+function setConn(on,t){ $("conn").className="conn"+(on?" on":""); $("connTxt").textContent=t; }
+function banner(msg){ const b=$("banner"); b.style.display="block"; b.textContent=msg; }
+function log(msg,err){ const el=$("log"); if(!el) return; const t=new Date().toLocaleTimeString();
+  const span=document.createElement("span"); if(err) span.className="e";
+  span.textContent="["+t+"] "+msg+"\n"; el.appendChild(span); el.scrollTop=el.scrollHeight;
+  while(el.childNodes.length>500) el.removeChild(el.firstChild); }
+let rawFeedCount=0;
+function rawFeedPush(line){ const el=$("rawFeed"); if(!el) return;
+  rawFeedCount++;
+  const atBottom = el.scrollHeight-el.scrollTop-el.clientHeight < 30;
+  el.appendChild(document.createTextNode(line+"\n"));
+  while(el.childNodes.length>400) el.removeChild(el.firstChild);
+  if(atBottom) el.scrollTop=el.scrollHeight;
+  const c=$("rawCount"); if(c) c.textContent="("+rawFeedCount+" lines)"; }
+function latest(){ return data.length?data[data.length-1]:null; }
+function freqOf(ch){ return (850.125+ch).toFixed(3); }
+
+// ============================================================================
+//  Render scheduling — only redraw the active view's heavy visuals
+// ============================================================================
+let queued=false;
+function requestRender(){ if(queued)return; queued=true; requestAnimationFrame(()=>{queued=false;render();}); }
+function render(){
+  updateKpis(); updateSidebar();
+  maybeLivePredict();                       // refresh the in-flight landing prediction (throttled)
+  if(activeTab==="profile"){ drawSkewT();
+    if(rView==="health") drawHealth();
+    else if(rView==="map") updateMap();
+    else if(rView==="timeseries") drawTimeseries();
+    else drawPlots(); }
+  if($("radioModal") && $("radioModal").style.display==="flex") updateRadio();
+  if(simPanelOpen) updateSim();
+}
+
+function updateKpis(){
+  const r=latest();
+  $("kAlt").textContent=r?fmt(r.alt,0):"--";
+  { const vs=climbNow(); const el=$("kVs");
+    el.textContent=(vs==null)?"--":(vs>=0?"+":"")+vs.toFixed(1);
+    el.style.color=(vs==null)?"":(vs>=0.2?"var(--good)":vs<=-0.2?"var(--bad)":""); }
+  $("kSpd").textContent=r?fmt(r.speed,1):"--";
+  $("kRssi").textContent=(r&&r.rssi!=null)?r.rssi:"--";
+  $("kSnr").textContent=(r&&r.snr!=null)?r.snr:"--";
+  $("kPkts").textContent=pktCount;
+  // header battery chip (coulomb estimate)
+  const bs=batteryState(), f=$("battFill");
+  if(f){ if(bs.pct!=null){ f.style.width=(Math.max(0,Math.min(100,bs.pct))*0.225)+"px";
+      f.style.background=bs.pct>50?"#46c46a":bs.pct>25?"#e0a93a":"#ff5a5a";
+      $("battChipTxt").textContent=bs.pct+"%"; }
+    else { f.style.width="0px"; $("battChipTxt").textContent="--"; } }
+}
+// Map RSSI (dBm) -> 0..5 bars; green >=3, amber at 2, red <=1.
+function updateSigBars(rssi){
+  const el=$("sigBars"); if(!el) return;
+  const bars = rssi==null ? 0 : rssi>=-60?5 : rssi>=-75?4 : rssi>=-90?3 : rssi>=-100?2 : rssi>=-110?1 : 0;
+  el.classList.toggle("weak", bars===2);
+  el.classList.toggle("bad", rssi!=null && bars<=1);
+  el.querySelectorAll("i").forEach((b,i)=>b.classList.toggle("on", i<bars));
+}
+function updateSidebar(){
+  const r=latest(); if(!r) return;
+  const set=(id,v)=>{$(id).textContent=v;};
+  set("vSid",r.sondeId||"--"); set("vSeq",r.seq!=null?r.seq:"--");
+  set("vPkts",pktCount); set("vGaps",totalGaps); set("vCrc",crcErrors);
+  const span=(lastSeq!=null&&firstSeq!=null)?(lastSeq-firstSeq+1):0;
+  $("vLoss").innerHTML=(span>0?(100*totalGaps/span).toFixed(1):"0.0")+' <small>%</small>';
+  // signal
+  sig("vRssi",r.rssi,"dBm"); sig("vNoise",r.noise,"dBm"); sig("vSnr",r.snr,"dB");
+  updateSigBars(r.rssi);
+  $("vChan").innerHTML=(r.sondeCh!=null)?r.sondeCh+' <small>'+freqOf(r.sondeCh)+'MHz</small>':"--";
+  // gps
+  $("vFix").innerHTML=(r.fix?'<span class="ok-txt">FIX</span>':'<span class="muted">no fix</span>')+" / "+(r.pps?"PPS":'<span class="muted">--</span>');
+  set("vSats",r.sats!=null?r.sats:"--");
+  $("vUtc").textContent=((r.date?r.date+" ":"")+(r.time||"")).trim()||"--";
+  set("vLat",fmt(r.lat,6)); set("vLon",fmt(r.lon,6));
+  $("vAlt").innerHTML=fmt(r.alt,0)+' <small>m</small>';
+  $("vPalt").innerHTML=fmt(pressureAltitude(r.pHpa),0)+' <small>m</small>';
+  { const vs=climbNow(); $("vVs").innerHTML=(vs==null)?'--':(vs>=0?"+":"")+vs.toFixed(1)+' <small>m/s</small>'; }
+  $("vSpd").innerHTML=fmt(r.speed,2)+' <small>m/s</small>';
+  $("vCrs").innerHTML=fmt(r.course,0)+'°';
+  // atmosphere
+  $("vT").innerHTML=fmt(r.thermT,2)+' <small>°C</small>';   // primary = thermistor
+  $("vSht").innerHTML=fmt(r.shtT,2)+' <small>°C</small>';   // secondary = SHT41
+  $("vRH").innerHTML=fmt(r.shtRH,1)+' <small>%</small>';
+  $("vDew").innerHTML=fmt(r.dew,2)+' <small>°C</small>';
+  $("vPress").innerHTML=fmt(r.pHpa,1)+' <small>hPa</small>';
+  $("vWind").innerHTML=r.vwind?fmt(r.windDeg,0)+'° @ '+fmt(r.speed,1)+' <small>m/s</small>':'--';
+  // power
+  $("vBatt").innerHTML=fmt(r.battV,3)+' <small>V</small>';
+  $("vCurr").innerHTML=fmt(r.curr,0)+' <small>mA</small>';
+  $("vPwr").innerHTML=fmt(r.pwr,0)+' <small>mW</small>';
+  // sensor chips
+  const defs=[["SHT41","vsht"],["MS5611","vms"],["MCP3221","vmcp"],["INA219","vina"],["Therm","vtherm"],["Wind","vwind"],["GPS","vgps"]];
+  $("chips").innerHTML=defs.map(([l,k])=>`<span class="chip ${r[k]?'ok':'no'}"><span class="d"></span>${l}</span>`).join("");
+  maybeShowPair(r);
+}
+
+// ---- Sonde pairing ---------------------------------------------------------
+function maybeShowPair(r){
+  if(!r || r.sondeId==null || r.sondeCh==null) return;
+  if(flightArmed || flightActive || importing) return;          // already recording
+  if(pairOpen || pairedId===r.sondeId || pairDismissed.has(r.sondeId)) return;
+  pmDetId = r.sondeId; pmDetCh = r.sondeCh;
+  $("pmId").textContent = r.sondeId;
+  $("pmRssi").textContent = (r.rssi!=null? r.rssi+" dBm" : "—");
+  $("pmCh").textContent = r.sondeCh+" · "+freqOf(r.sondeCh)+" MHz";
+  $("pmSats").textContent = (r.sats!=null? r.sats : "—");
+  $("pmFreq").value = String(r.sondeCh);
+  // prefill the save path: last-used, else the server's Documents\PTHSonde default
+  let sd=""; try{ sd=localStorage.getItem("pth_savedir")||""; }catch(e){}
+  $("pmSaveDir").value = sd || SAVE_DEFAULT || "";
+  pairOpen = true;
+  $("pairModal").style.display = "flex";
+}
+function closePair(){ $("pairModal").style.display="none"; pairOpen=false; }
+function updatePairedBadge(){
+  const b=$("pairedBadge");
+  if(pairedId!=null){ b.classList.add("on"); $("pairedTxt").textContent="Paired "+pairedId; }
+  else b.classList.remove("on");
+}
+function sig(id,v,u){ $(id).innerHTML=(v!=null)?v+' <small>'+u+'</small>':'<span class="muted">NA</span>'; }
+
+// ============================================================================
+//  Canvas theme palette — structural colors (grid/labels/backing) follow the
+//  light/dark theme so the plots turn white in light mode. Data-series colors
+//  (temp red, dew green, …) stay saturated and read fine on either backing.
+// ============================================================================
+function plotTheme(){
+  return document.body.classList.contains("light")
+    ? {grid:"#e4e9f1",grid0:"#c8d0dc",gridS:"#d6dde7",lbl:"#4d5866",lbl2:"#6b7684",
+       ink:"#16202e",nodata:"#9aa7b6",iso:"#d5dce7",iso0:"#4a86d6",dry:"#cdb684",
+       moist:"#94c7a3",barb:"#5a6672",boxbg:"rgba(255,255,255,0.86)"}
+    : {grid:"#151b25",grid0:"#283549",gridS:"#1a2230",lbl:"#9dabbd",lbl2:"#8794a5",
+       ink:"#e7edf4",nodata:"#46566f",iso:"#26313f",iso0:"#3f78c0",dry:"#2c4568",
+       moist:"#33623f",barb:"#9aa7b6",boxbg:"rgba(8,12,18,0.82)"};
+}
+
+// ============================================================================
+//  Canvas helper
+// ============================================================================
+function setup(c){
+  const r=c.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  c.width=Math.max(1,Math.round(r.width*dpr)); c.height=Math.max(1,Math.round(r.height*dpr));
+  const ctx=c.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w:r.width,h:r.height};
+}
+function nodata(ctx,w,h){ ctx.fillStyle=plotTheme().nodata;ctx.font="12px sans-serif";ctx.textAlign="center";
+  ctx.fillText("waiting for data…",w/2,h/2); }
+
+// ============================================================================
+//  Plot engine — supports time-axis and altitude-axis (horizontal or vertical).
+//  Every point is [axisValue, dataValue]; axisValue is time (s) or baro alt (m).
+//  opts.vert=true puts the axis on Y (profile). secondary (dual axis) only in
+//  horizontal modes. opts.axisIsAlt labels the axis dimension as altitude.
+// ============================================================================
+// "nice" round axis ticks (1/2/5 steps) instead of arbitrary quartiles
+function niceStep(span,n){ const raw=(span||1)/Math.max(1,n);
+  const mag=Math.pow(10,Math.floor(Math.log10(raw))), norm=raw/mag;
+  return (norm<1.5?1:norm<3?2:norm<7?5:10)*mag; }
+function niceTicks(min,max,n){ const step=niceStep(max-min,n), out=[];
+  for(let v=Math.ceil(min/step-1e-9)*step; v<=max+1e-9; v+=step) out.push(Math.abs(v)<step*1e-6?0:v);
+  return out; }
+function timeTicks(min,max,n){ const cand=[5,10,15,30,60,120,300,600,900,1800,3600,7200];
+  const step=cand.find(c=>c>=(max-min)/Math.max(1,n))||cand[cand.length-1], out=[];
+  for(let v=Math.ceil(min/step-1e-9)*step; v<=max+1e-9; v+=step) out.push(v);
+  return out; }
+function fmtClock(s){ s=Math.max(0,Math.round(s)); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
+  const p=x=>String(x).padStart(2,"0"); return h? h+":"+p(m)+":"+p(ss) : m+":"+p(ss); }
+
+function drawSeries(ctx,w,h,series,opts){
+  opts=opts||{};
+  const vert=!!opts.vert;
+  const hasSec=opts.secondary&&!vert&&opts.secondary.pts&&opts.secondary.pts.length;
+  // tight margins -> maximise the data area; no enclosing frame
+  const padL=42,padR=hasSec?40:9,padT=8,padB=18;
+  const x0=padL,x1=w-padR,y0=padT,y1=h-padB;
+  if(x1<=x0||y1<=y0) return;
+  let amin=Infinity,amax=-Infinity,vmin=Infinity,vmax=-Infinity;
+  series.forEach(s=>s.pts.forEach(p=>{ if(p[0]<amin)amin=p[0]; if(p[0]>amax)amax=p[0]; if(p[1]<vmin)vmin=p[1]; if(p[1]>vmax)vmax=p[1]; }));
+  if(hasSec) opts.secondary.pts.forEach(p=>{ if(p[0]<amin)amin=p[0]; if(p[0]>amax)amax=p[0]; });
+  if(!isFinite(amin)||!isFinite(vmin)){ nodata(ctx,w,h); return; }
+  if(amax-amin<1e-9) amax=amin+1;
+  if(vmax-vmin<1e-6){ vmax+=1; vmin-=1; }
+  const vpad=(vmax-vmin)*0.08; vmin-=vpad; vmax+=vpad;
+  const Ax=a=>x0+(a-amin)/(amax-amin)*(x1-x0);
+  const Ay=a=>y1-(a-amin)/(amax-amin)*(y1-y0);
+  const Vx=v=>x0+(v-vmin)/(vmax-vmin)*(x1-x0);
+  const Vy=v=>y1-(v-vmin)/(vmax-vmin)*(y1-y0);
+  const fx=opts.fixed!=null?opts.fixed:1;
+  const afmt=opts.axisFmt||(a=>String(Math.round(a)));
+  const TH=plotTheme();
+  ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
+  // value axis: hairline gridlines, slightly brighter zero line, labels in the margin
+  niceTicks(vmin,vmax,4).forEach(val=>{ const zero=Math.abs(val)<1e-9;
+    ctx.strokeStyle=zero?TH.grid0:TH.grid;
+    if(!vert){ const yy=Vy(val); ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+      ctx.fillStyle=TH.lbl;ctx.textAlign="right";ctx.fillText(val.toFixed(fx),x0-5,yy+4);
+    } else { const xx=Vx(val); ctx.beginPath();ctx.moveTo(xx,y0);ctx.lineTo(xx,y1);ctx.stroke();
+      ctx.fillStyle=TH.lbl;ctx.textAlign="center";ctx.fillText(val.toFixed(fx),xx,y1+13);
+    }
+  });
+  // position axis (time m:ss / altitude): labels only, no full gridlines (keeps it clean)
+  (opts.axisIsTime?timeTicks(amin,amax,5):niceTicks(amin,amax,5)).forEach(av=>{
+    ctx.fillStyle=TH.lbl;
+    if(vert){ const yy=Ay(av); if(yy<y0-1||yy>y1+1)return; ctx.textAlign="right"; ctx.fillText(afmt(av),x0-5,yy+4); }
+    else    { const xx=Ax(av); if(xx<x0-1||xx>x1+1)return; ctx.textAlign="center"; ctx.fillText(afmt(av),xx,y1+13); }
+  });
+  // primary series (clipped, rounded joins)
+  ctx.save(); ctx.beginPath(); ctx.rect(x0,y0-3,x1-x0,y1-y0+6); ctx.clip();
+  series.forEach(s=>{ if(!s.pts.length)return;
+    const XY=p=>[vert?Vx(p[1]):Ax(p[0]), vert?Ay(p[0]):Vy(p[1])];
+    if(s.scatter){ ctx.fillStyle=s.color;
+      s.pts.forEach(p=>{ const [xx,yy]=XY(p); ctx.beginPath();ctx.arc(xx,yy,s.r||1.5,0,7);ctx.fill(); });
+    } else {
+      ctx.strokeStyle=s.color;ctx.lineWidth=s.lw||1.6;ctx.lineJoin="round";ctx.lineCap="round";ctx.beginPath();
+      s.pts.forEach((p,k)=>{ const [xx,yy]=XY(p); k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+  // current-value dot at the end of each line series
+  series.forEach(s=>{ if(!s.pts.length||s.scatter)return;
+    const L=s.pts[s.pts.length-1], lx=vert?Vx(L[1]):Ax(L[0]), ly=vert?Ay(L[0]):Vy(L[1]);
+    ctx.fillStyle=s.color;ctx.beginPath();ctx.arc(lx,ly,2.4,0,7);ctx.fill(); });
+  // secondary right axis (line + light labels, no gridlines)
+  if(hasSec){ const sp=opts.secondary.pts; let a=Infinity,b=-Infinity;
+    sp.forEach(p=>{ if(p[1]<a)a=p[1]; if(p[1]>b)b=p[1]; });
+    if(b-a<1e-6){b+=1;a-=1;} const pd=(b-a)*0.08;a-=pd;b+=pd;
+    const SY=v=>y1-(v-a)/(b-a)*(y1-y0), sfx=opts.secondary.fixed||0;
+    ctx.save(); ctx.beginPath(); ctx.rect(x0,y0-3,x1-x0,y1-y0+6); ctx.clip();
+    ctx.strokeStyle=opts.secondary.color;ctx.lineWidth=1.4;ctx.lineJoin="round";ctx.beginPath();
+    sp.forEach((p,k)=>{const xx=Ax(p[0]),yy=SY(p[1]);k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle=opts.secondary.color;ctx.textAlign="left";
+    niceTicks(a,b,3).forEach(val=>{ const yy=SY(val); if(yy<y0||yy>y1)return; ctx.fillText(val.toFixed(sfx),x1+3,yy+3); });
+  }
+  // optional on-plot legend (top-left) — [{label,color}]
+  if(opts.legend&&opts.legend.length){ ctx.font="10px ui-monospace,monospace";ctx.textAlign="left";ctx.textBaseline="alphabetic";
+    let lx=x0+4; const ly=y0+10;
+    opts.legend.forEach(it=>{ ctx.fillStyle=it.color;ctx.fillRect(lx,ly-6,11,3);
+      ctx.fillStyle=TH.lbl2;ctx.fillText(it.label,lx+15,ly-2); lx+=15+ctx.measureText(it.label).width+13; }); }
+}
+// axis value for a record under the current mode (time seconds or baro altitude)
+function axisOf(r){ return plotMode==="time" ? r.tSec : pressureAltitude(r.pHpa); }
+// build [axis,value] points, skipping records missing either
+function ptsOf(getV){ const o=[]; for(const r of data){ const a=axisOf(r); if(a==null)continue; const v=getV(r); if(v==null)continue; o.push([a,v]); } return o; }
+// centered N-point moving average over an [axis,value] series (returns [axis,avg])
+function rollAvg(pts,n){ const m=pts.length,out=[]; if(!m)return out; const half=Math.floor(n/2);
+  for(let i=0;i<m;i++){ let s=0,c=0; const lo=Math.max(0,i-half), hi=Math.min(m-1,i+(n-half-1));
+    for(let j=lo;j<=hi;j++){ s+=pts[j][1]; c++; } out.push([pts[i][0], s/c]); }
+  return out; }
+
+function drawPlots(){
+  const wind=[],th=[],rh=[];
+  for(const r of profileData()){ if(r.pHpa==null)continue;
+    if(r.fix&&r.speed!=null) wind.push([r.pHpa,r.speed]);
+    if(r.thermT!=null) th.push([r.pHpa,(r.thermT+273.15)*Math.pow(1000/r.pHpa,0.2854)]);
+    if(r.shtRH!=null) rh.push([r.pHpa,r.shtRH]); }
+  vProfile("windProf",wind,{color:"#f5a623",scColor:"#946a2a",scatter:true,fix:0,label:"Wind m/s"});
+  vProfile("thProf",  th,  {color:"#ff8c42",fix:0,label:"θ K"});
+  vProfile("rhProf",  rh,  {color:"#46a0ff",fix:0,xmin:0,xmax:100,label:"RH %"});
+  drawHodo();
+  const r=latest();
+  if($("nW"))  $("nW").textContent =(r&&r.fix&&r.speed!=null)?fmt(r.speed,1)+" m/s":"--";
+  if($("nTh")) $("nTh").textContent=(r&&r.thermT!=null&&r.pHpa)?Math.round((r.thermT+273.15)*Math.pow(1000/r.pHpa,0.2854))+" K":"--";
+  if($("nRH")) $("nRH").textContent=(r&&r.shtRH!=null)?Math.round(r.shtRH)+"%":"--";
+}
+
+// Generic vertical profile: value (X) vs pressure (Y, log-P). 5-pt rolled scatter
+// (optional) + 10-pt rolled line; pressure labelled on the left in hPa.
+function vProfile(canvasId,pts,opt){
+  opt=opt||{};
+  const c=$(canvasId); if(!c) return;
+  const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const mL=34,mR=9,mT=13,mB=18, x0=mL,x1=w-mR,y0=mT,y1=h-mB;
+  if(x1<=x0||y1<=y0) return;
+  const lnT=Math.log(SK.Ptop),lnB=Math.log(SK.Pbot);
+  const py=p=>y1-((lnB-Math.log(p))/(lnB-lnT))*(y1-y0);
+  const TH=plotTheme();
+  ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
+  [1000,700,500,300,200,100].forEach(p=>{ if(p>SK.Pbot||p<SK.Ptop)return;
+    const yy=py(p); ctx.strokeStyle=TH.grid; ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+    ctx.fillStyle=TH.lbl;ctx.textAlign="right";ctx.fillText(p,x0-4,yy+4); });
+  if(opt.label){ ctx.fillStyle=TH.lbl2;ctx.textAlign="left";ctx.fillText(opt.label,x0+1,y0-2); }
+  if(pts.length<2){ nodata(ctx,w,h); return; }
+  let vmin=opt.xmin,vmax=opt.xmax;
+  if(vmin==null||vmax==null){ vmin=Infinity;vmax=-Infinity; pts.forEach(q=>{ if(q[1]<vmin)vmin=q[1]; if(q[1]>vmax)vmax=q[1]; });
+    if(vmax-vmin<1e-6){vmax+=1;vmin-=1;} const pad=(vmax-vmin)*0.08; vmin-=pad;vmax+=pad; }
+  const vx=v=>x0+(v-vmin)/(vmax-vmin)*(x1-x0);
+  niceTicks(vmin,vmax,3).forEach(v=>{ const xx=vx(v); if(xx<x0-1||xx>x1+1)return;
+    ctx.strokeStyle=TH.grid;ctx.beginPath();ctx.moveTo(xx,y0);ctx.lineTo(xx,y1);ctx.stroke();
+    ctx.fillStyle=TH.lbl;ctx.textAlign="center";ctx.fillText(opt.fix!=null?v.toFixed(opt.fix):Math.round(v),xx,y1+13); });
+  const sp=pts.slice().sort((a,b)=>b[0]-a[0]);
+  ctx.save();ctx.beginPath();ctx.rect(x0,y0-3,x1-x0,y1-y0+6);ctx.clip();
+  if(opt.scatter){ ctx.fillStyle=opt.scColor||opt.color; rollAvg(sp,5).forEach(q=>{ ctx.beginPath();ctx.arc(vx(q[1]),py(q[0]),1.4,0,7);ctx.fill(); }); }
+  ctx.strokeStyle=opt.color;ctx.lineWidth=1.8;ctx.lineJoin="round";ctx.beginPath();
+  rollAvg(sp,10).forEach((q,k)=>{ const xx=vx(q[1]),yy=py(q[0]); k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });ctx.stroke();
+  ctx.restore();
+}
+
+// ============================================================================
+//  Time-Series tab — temp / ascent rate / wind / dewpoint vs elapsed time
+// ============================================================================
+function drawTimeseries(){
+  const t0=data.length?data[0].tSec:0;
+  const opts={axisIsTime:true,axisFmt:a=>fmtClock(a-t0),fixed:1};
+  const ts=getV=>{ const o=[]; for(const r of data){ if(r.tSec==null)continue; const v=getV(r); if(v==null)continue; o.push([r.tSec,v]); } return o; };
+  const card=(id,pts,color,nowId,nowTxt)=>{ const c=$(id); if(!c)return;
+    const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+    if(pts.length<2) nodata(ctx,w,h); else drawSeries(ctx,w,h,[{color,pts}],opts);
+    if(nowId&&$(nowId)) $(nowId).textContent=nowTxt; };
+  const r=latest();
+  card("tsTemp", ts(x=>x.thermT), "#ff6b6b", "tnT", r&&r.thermT!=null?fmt(r.thermT,1)+" °C":"--");
+  card("tsAsc",  climbSeries(),    "#22d3ee", "tnA", (()=>{const v=climbNow();return v==null?"--":(v>=0?"+":"")+v.toFixed(1)+" m/s";})());
+  card("tsWind", ts(x=>x.fix?x.speed:null), "#f5a623", "tnW", r&&r.speed!=null?fmt(r.speed,1)+" m/s":"--");
+  card("tsDew",  ts(x=>x.dew),     "#46c46a", "tnD", r&&r.dew!=null?fmt(r.dew,1)+" °C":"--");
+}
+
+// Altitude-averaged wind vectors (500 m bins + 5-pt smoothing) — the single
+// source used by BOTH the hodograph and the skew-T wind barbs.
+function avgWinds(){
+  const raw=[]; for(const rr of profileData()){ if(!rr.fix||rr.windDeg==null||rr.speed==null) continue;
+    const z=(rr.alt!=null?rr.alt:pressureAltitude(rr.pHpa)); if(z==null) continue;
+    const a=rr.windDeg*Math.PI/180; raw.push({z,p:rr.pHpa,u:-rr.speed*Math.sin(a),v:-rr.speed*Math.cos(a)}); }
+  if(!raw.length) return [];
+  const bins=new Map();
+  raw.forEach(q=>{ const k=Math.round(q.z/500); const b=bins.get(k)||{z:0,u:0,v:0,n:0,p:0,pn:0};
+    b.z+=q.z;b.u+=q.u;b.v+=q.v;b.n++; if(q.p!=null){b.p+=q.p;b.pn++;} bins.set(k,b); });
+  let avg=[...bins.values()].map(b=>({z:b.z/b.n,u:b.u/b.n,v:b.v/b.n,p:b.pn?b.p/b.pn:null})).sort((a,b)=>a.z-b.z);
+  avg=avg.map((q,i,A)=>{ let su=0,sv=0,n=0; for(let j=Math.max(0,i-2);j<=Math.min(A.length-1,i+2);j++){su+=A[j].u;sv+=A[j].v;n++;}
+    const u=su/n,v=sv/n; return {z:q.z,p:q.p,u,v,spd:Math.hypot(u,v),dir:(Math.atan2(-u,-v)*180/Math.PI+360)%360}; });
+  return avg;
+}
+
+// Hodograph (its own 2x2 cell) — uses the averaged winds above.
+function drawHodo(){
+  const c=$("hodo"); if(!c) return; const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const cx=Math.round(w/2), cy=Math.round(h/2), R=Math.min(w,h)/2-14;
+  if(R<12) return;
+  ctx.font="10px ui-monospace,monospace"; ctx.textBaseline="alphabetic";
+  const avg=avgWinds();
+  let smax=10; avg.forEach(p=>{ if(p.spd>smax)smax=p.spd; }); smax=Math.ceil(smax/5)*5;
+  const sc=R/smax;
+  const TH=plotTheme();
+  ctx.strokeStyle=TH.gridS; ctx.lineWidth=1;
+  for(let r=5;r<=smax;r+=5){ ctx.beginPath();ctx.arc(cx,cy,r*sc,0,7);ctx.stroke();
+    ctx.fillStyle=TH.nodata;ctx.textAlign="left";ctx.fillText(r,cx+r*sc-8,cy-2); }
+  ctx.strokeStyle=TH.gridS;ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
+  if(avg.length>=2){
+    const bands=[[0,3000,"#ff5a5a"],[3000,6000,"#46c46a"],[6000,9000,"#f5d24a"],[9000,1e9,"#39b6c8"]];
+    ctx.lineWidth=2; ctx.lineJoin="round";
+    for(let i=1;i<avg.length;i++){ const z=avg[i].z, col=(bands.find(b=>z>=b[0]&&z<b[1])||bands[3])[2];
+      ctx.strokeStyle=col;ctx.beginPath();ctx.moveTo(cx+avg[i-1].u*sc,cy-avg[i-1].v*sc);ctx.lineTo(cx+avg[i].u*sc,cy-avg[i].v*sc);ctx.stroke(); }
+    const L=avg[avg.length-1]; ctx.fillStyle=TH.ink;ctx.beginPath();ctx.arc(cx+L.u*sc,cy-L.v*sc,2.6,0,7);ctx.fill();
+  }
+}
+
+// ============================================================================
+//  System Health view — engineering telemetry, mixed chart types
+// ============================================================================
+// Rough CR123A (Energizer 123 / Li-MnO2) loaded discharge curve -> % remaining.
+// Voltage-based estimate only: cold + load sag make it read low, so treat as a guide.
+function cr123Pct(v){
+  if(v==null) return null;
+  const c=[[3.00,100],[2.92,90],[2.85,75],[2.80,60],[2.75,45],[2.70,33],[2.62,20],[2.50,10],[2.35,4],[2.10,1],[1.80,0]];
+  if(v>=c[0][0]) return 100;
+  if(v<=c[c.length-1][0]) return 0;
+  for(let i=1;i<c.length;i++){ if(v>=c[i][0]){ const a=c[i-1],b=c[i]; return Math.round(b[1]+(v-b[0])/(a[0]-b[0])*(a[1]-b[1])); } }
+  return 0;
+}
+// BEST battery estimate: coulomb-count the INA219 current (mAh used) against the
+// CR123A nominal capacity, assuming a fresh cell at first packet. Far better than
+// voltage for a flat-curve Li primary — immune to the cold/load voltage sag.
+let CR123_MAH=1500;
+function batteryPctSeries(){   // cumulative % remaining at each time point (coulomb count)
+  const out=[]; let used=0, prev=null;
+  for(const x of data){ if(x.tSec==null) continue;
+    if(x.curr!=null){ if(prev){ const dt=(x.tSec-prev.t)/3600; if(dt>0&&dt<0.2) used+=(x.curr+prev.c)/2*dt; } prev={t:x.tSec,c:x.curr}; }
+    out.push([x.tSec, Math.max(0,Math.min(100,100-used/CR123_MAH*100))]); }
+  return out;
+}
+function batteryState(){
+  let used=0, prev=null, lastV=null, n=0;
+  for(const x of data){
+    if(x.tSec==null) continue;
+    if(x.battV!=null) lastV=x.battV;
+    if(x.curr!=null){
+      if(prev){ const dt=(x.tSec-prev.t)/3600; if(dt>0&&dt<0.2) used += (x.curr+prev.c)/2*dt; }  // mAh, trapezoid
+      prev={t:x.tSec,c:x.curr}; n++;
+    }
+  }
+  if(n<2) return {pct:cr123Pct(lastV), used:null};          // no current data -> voltage fallback
+  return {pct:Math.max(0,Math.min(100,Math.round(100-used/CR123_MAH*100))), used:Math.round(used)};
+}
+function drawBattGauge(ctx,w,h,pct){
+  if(pct==null) return;
+  const col=pct>50?"#46c46a":pct>25?"#e0a93a":"#ff5a5a";
+  const x=42,y=6,bw=42,bh=15;
+  const TH=plotTheme();
+  ctx.save();
+  ctx.fillStyle=TH.boxbg; ctx.fillRect(x-3,y-3,bw+40,bh+6);                       // backing
+  ctx.strokeStyle=TH.barb;ctx.lineWidth=1.2;ctx.strokeRect(x+.5,y+.5,bw,bh);      // body
+  ctx.fillStyle=TH.barb;ctx.fillRect(x+bw+1,y+bh*0.3,2.5,bh*0.4);                 // terminal nub
+  ctx.fillStyle=col;ctx.fillRect(x+2,y+2,(bw-4)*Math.max(0,Math.min(1,pct/100)),bh-4);  // fill
+  ctx.fillStyle=TH.ink;ctx.font="10px ui-monospace,monospace";ctx.textAlign="left";ctx.textBaseline="middle";
+  ctx.fillText(pct+"%",x+bw+8,y+bh/2);
+  ctx.restore();
+}
+function drawHealth(){
+  const r=latest();
+  const t0=data.length?data[0].tSec:0;
+  const base={axisIsTime:true,axisFmt:a=>fmtClock(a-t0)};
+  const T=getV=>{ const o=[]; for(const x of data){ if(x.tSec==null)continue; const v=getV(x); if(v==null)continue; o.push([x.tSec,v]); } return o; };
+  const PT=(id,series,opts,now)=>{ const c=$(id); if(!c)return; const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+    drawSeries(ctx,w,h,series,Object.assign({},base,opts)); if(now&&$(now.id))$(now.id).textContent=now.v; };
+
+  // Battery: pack voltage vs time only (the % lives in the corner readout).
+  const bs=batteryState();
+  PT("hBatt",[{pts:T(x=>x.battV),color:"#7c9fff",lw:2.1}],{fixed:2},
+     {id:"hnBatt",v:(r&&r.battV!=null?fmt(r.battV,2)+" V":"--")
+       +(bs.pct!=null?" · "+bs.pct+"% left":"")+(bs.used!=null?" ("+bs.used+" mAh used)":"")});
+  // Radio: RSSI (signal) and noise floor on ONE dBm axis. The GAP between them is
+  // the SNR — a wide gap = strong, clean link. Both smoothed so it's not jagged.
+  const rssi=T(x=>x.rssi), noise=T(x=>x.noise);
+  PT("hRssi",[{pts:rollAvg(rssi,12),color:"#4a9eff",lw:2.2},{pts:rollAvg(noise,12),color:"#e0728a",lw:1.6}],
+     {fixed:0,legend:[{label:"RSSI (signal)",color:"#4a9eff"},{label:"noise floor",color:"#e0728a"}]},
+     {id:"hnRssi",v:r&&r.rssi!=null?(r.rssi+" dBm"+(r.snr!=null?" · SNR "+r.snr+" dB":"")+" · "+linkQuality(r.rssi,r.snr)):"--"});
+  drawPktBars();
+}
+// Plain-language link quality from RSSI (strength) + SNR (cleanliness).
+function linkQuality(rssi,snr){
+  if(rssi==null) return "";
+  if(rssi>=-85 && (snr==null||snr>=8)) return "Strong";
+  if(rssi>=-100 && (snr==null||snr>=3)) return "OK";
+  return "Weak";
+}
+// Packet-health bar chart — received / gaps (lost) / CRC errors.
+function drawPktBars(){
+  const c=$("hPkt"); if(!c) return; const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const recv=pktCount||data.length||0, gaps=totalGaps||0, crc=crcErrors||0;
+  if($("hnPkt")){ const tot=recv+gaps; $("hnPkt").textContent = tot? Math.round(recv/tot*100)+"% ok" : "--"; }
+  const bars=[["Recv",recv,"#46c46a"],["Gaps",gaps,"#d8a23a"],["CRC err",crc,"#ff5a5a"]];
+  const mL=12,mR=12,mT=16,mB=18, x0=mL,x1=w-mR,y0=mT,y1=h-mB;
+  if(x1<=x0||y1<=y0) return;
+  const maxV=Math.max(1,...bars.map(b=>b[1])), slot=(x1-x0)/bars.length, bw=slot*0.5;
+  const TH=plotTheme();
+  ctx.font="11px ui-monospace,monospace"; ctx.textBaseline="alphabetic";
+  ctx.strokeStyle=TH.gridS; ctx.beginPath();ctx.moveTo(x0,y1+.5);ctx.lineTo(x1,y1+.5);ctx.stroke();
+  bars.forEach((b,i)=>{ const cx=x0+slot*(i+0.5), bh=(b[1]/maxV)*(y1-y0);
+    ctx.fillStyle=b[2]; ctx.fillRect(cx-bw/2,y1-bh,bw,bh);
+    ctx.fillStyle=TH.ink;ctx.textAlign="center";ctx.fillText(b[1],cx,y1-bh-4);
+    ctx.fillStyle=TH.lbl2;ctx.fillText(b[0],cx,y1+13); });
+}
+
+// ============================================================================
+//  Skew-T log-P
+// ============================================================================
+const SK={Pbot:1050,Ptop:100,Tmin:-45,Tmax:45,skew:0.95};
+function drawSkewT(){
+  const c=$("skewt"); const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const mL=46,mR=44,mT=14,mB=28, x0=mL,x1=w-mR,y0=mT,y1=h-mB, pw=x1-x0,ph=y1-y0;
+  const lnT=Math.log(SK.Ptop),lnB=Math.log(SK.Pbot);
+  const Yf=p=>(lnB-Math.log(p))/(lnB-lnT);          // 0 bottom .. 1 top
+  const py=p=>y1-Yf(p)*ph;
+  const ppd=pw/(SK.Tmax-SK.Tmin);
+  const px=(T,p)=>x0+((T-SK.Tmin)+Yf(p)*SK.skew*(SK.Tmax-SK.Tmin))*ppd;
+
+  const TH=plotTheme();
+  ctx.save(); ctx.beginPath(); ctx.rect(x0,y0,pw,ph); ctx.clip();
+  // dry adiabats
+  ctx.strokeStyle=TH.dry; ctx.lineWidth=0.8; ctx.setLineDash([]);
+  for(let th=-40;th<=200;th+=20){ ctx.beginPath(); let f=1;
+    for(let p=SK.Pbot;p>=SK.Ptop;p-=8){ const Tc=(th+273.15)*Math.pow(p/1000,0.2854)-273.15;
+      const xx=px(Tc,p),yy=py(p); f?(ctx.moveTo(xx,yy),f=0):ctx.lineTo(xx,yy);} ctx.stroke(); }
+  // mixing-ratio lines (constant w), dashed green
+  ctx.strokeStyle=TH.moist; ctx.setLineDash([3,4]);
+  [0.5,1,2,4,8,16,24].forEach(wv=>{ ctx.beginPath(); let f=1;
+    for(let p=SK.Pbot;p>=400;p-=10){ const e=(wv/1000*p)/(0.622+wv/1000); if(e<=0)continue;
+      const Td=243.04*Math.log(e/6.112)/(17.625-Math.log(e/6.112));
+      const xx=px(Td,p),yy=py(p); f?(ctx.moveTo(xx,yy),f=0):ctx.lineTo(xx,yy);} ctx.stroke(); });
+  ctx.setLineDash([]);
+  // isotherms
+  for(let T=-120;T<=50;T+=10){ ctx.strokeStyle=(T===0)?TH.iso0:TH.iso; ctx.lineWidth=(T===0)?1.3:0.8;
+    ctx.beginPath(); ctx.moveTo(px(T,SK.Pbot),py(SK.Pbot)); ctx.lineTo(px(T,SK.Ptop),py(SK.Ptop)); ctx.stroke(); }
+  ctx.restore();
+
+  // isobars + labels
+  ctx.strokeStyle=TH.iso; ctx.fillStyle=TH.lbl; ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=0.8; ctx.textAlign="right";
+  [1000,925,850,700,600,500,400,300,250,200,150,100].forEach(p=>{ if(p>SK.Pbot||p<SK.Ptop)return;
+    const yy=py(p); ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke(); ctx.fillText(p,x0-4,yy+4); });
+  ctx.textAlign="center";
+  for(let T=-40;T<=40;T+=10){ const xx=px(T,SK.Pbot); if(xx>x0&&xx<x1) ctx.fillText(T+"°",xx,y1+14); }
+  ctx.fillStyle=TH.lbl;ctx.textAlign="left";ctx.fillText("hPa",4,y0+9);
+
+  // traces (from launch onward — ground rows are heat-soaked garbage)
+  const prof=profileData().filter(r=>r.pHpa!=null);
+  function trace(get,color,wdt,dash){ const pts=prof.filter(r=>get(r)!=null).map(r=>[get(r),r.pHpa]); if(!pts.length)return;
+    ctx.save();ctx.beginPath();ctx.rect(x0,y0,pw,ph);ctx.clip();
+    ctx.strokeStyle=color;ctx.lineWidth=wdt;ctx.setLineDash(dash||[]);ctx.beginPath();
+    pts.forEach((p,k)=>{const xx=px(p[0],p[1]),yy=py(p[1]);k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});
+    ctx.stroke();ctx.setLineDash([]);ctx.restore(); }
+  trace(r=>r.dew,"#46c46a",2.4);            // dewpoint
+  trace(r=>r.thermT,"#ff6b6b",2.4);         // thermistor = primary temperature
+
+  // wind barbs at right margin — altitude-averaged winds (same source as the
+  // hodograph), drawn in KNOTS (half=5, full=10, pennant=50 kt)
+  const barbX=x1-10; _BARBCOL=TH.barb;
+  avgWinds().forEach(a=>{ if(a.p==null||a.p>SK.Pbot||a.p<SK.Ptop)return;
+    drawBarb(ctx,barbX,py(a.p),a.dir,a.spd*1.94384); });   // m/s -> kt
+
+  // legend (top-left, on-canvas)
+  const lg=[["Thermistor","#ff6b6b"],["Dewpoint","#46c46a"]];
+  ctx.font="10px sans-serif"; ctx.textAlign="left";
+  lg.forEach((it,i)=>{ const yy=y0+11+i*13; ctx.strokeStyle=it[1]; ctx.lineWidth=2.4;
+    ctx.beginPath();ctx.moveTo(x0+8,yy);ctx.lineTo(x0+24,yy);ctx.stroke();
+    ctx.fillStyle=TH.lbl2; ctx.fillText(it[0],x0+29,yy+3); });
+
+  // current parcel marker (thermistor temperature)
+  const r=latest();
+  if(r&&r.pHpa!=null&&r.thermT!=null){ ctx.fillStyle="#ff6b6b";ctx.beginPath();ctx.arc(px(r.thermT,r.pHpa),py(r.pHpa),3.5,0,7);ctx.fill(); }
+}
+let _BARBCOL="#9aa7b6";
+function drawBarb(ctx,x,y,dirFrom,kt){
+  // Met convention: the staff points toward the direction the wind blows FROM.
+  // (dx,dy) is the unit vector toward dirFrom; the staff/barbs extend along it.
+  const a=(dirFrom-90)*Math.PI/180, len=18, dx=-Math.cos(a),dy=-Math.sin(a);
+  ctx.strokeStyle=_BARBCOL;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-dx*len,y-dy*len);ctx.stroke();
+  let rem=Math.round(kt/5)*5, bx=x-dx*len, by=y-dy*len; const step=len/5; const perp=Math.PI/2;
+  const fx=Math.cos(a+perp),fy=Math.sin(a+perp);
+  while(rem>=50){ ctx.fillStyle=_BARBCOL;ctx.beginPath();ctx.moveTo(bx,by);
+    ctx.lineTo(bx+dx*step*2+fx*7,by+dy*step*2+fy*7);ctx.lineTo(bx+dx*step*2,by+dy*step*2);ctx.closePath();ctx.fill();
+    bx+=dx*step*2;by+=dy*step*2;rem-=50; }
+  while(rem>=10){ ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+fx*7,by+fy*7);ctx.stroke(); bx+=dx*step;by+=dy*step;rem-=10; }
+  if(rem>=5){ ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+fx*3.5,by+fy*3.5);ctx.stroke(); }
+}
+
+// ============================================================================
+//  Map (Leaflet w/ canvas fallback)
+// ============================================================================
+let map=null,trackLine=null,posMarker=null,launchMarker=null,mapReady=false;
+let predAscentLine=null,predDescentLine=null,landingMarker=null,launchSelMarker=null,pickMode=false;
+let baseAscentLine=null,baseDescentLine=null,baseLandingMarker=null;   // frozen initial GFS-only prediction
+function initMap(){
+  // relocate the map + overlays into the right-pane "Map" view (next to the Skew-T)
+  const mhost=document.querySelector('.rview[data-rv="map"]');
+  if(mhost){ ["map","mapFallback","simPanel"].forEach(id=>{ const el=$(id); if(el) mhost.appendChild(el); });
+    const mb=document.querySelector(".mapbar"); if(mb) mhost.appendChild(mb); }
+  if(typeof L==="undefined"){ $("map").style.display="none"; $("mapFallback").style.display="block";
+    log("Leaflet/map tiles unavailable (offline?) — showing plain track."); return; }
+  map=L.map("map",{zoomControl:true,attributionControl:true,preferCanvas:true}).setView([39.5,-98.35],4);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+  trackLine=L.polyline([],{color:"#4a9eff",weight:3,opacity:.9}).addTo(map);
+  baseAscentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
+  baseDescentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
+  predAscentLine=L.polyline([],{color:"#22d3ee",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
+  predDescentLine=L.polyline([],{color:"#f5a623",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
+  map.on("click",e=>{ if(!pickMode)return; setLaunch(e.latlng.lat,e.latlng.lng); setPickMode(false); });
+  mapReady=true;
+}
+function updateMap(){
+  if(!mapReady){ drawTrackFallback(); return; }
+  map.invalidateSize();
+  const pts=data.filter(r=>r.lat!=null&&r.lon!=null&&(r.lat!==0||r.lon!==0)).map(r=>[r.lat,r.lon]);
+  if(!pts.length) return;
+  trackLine.setLatLngs(pts);
+  const last=pts[pts.length-1];
+  if(!posMarker){ posMarker=L.circleMarker(last,{radius:6,color:"#fff",weight:2,fillColor:"#f0556b",fillOpacity:1}).addTo(map); }
+  else posMarker.setLatLng(last);
+  posMarker.bindTooltip("alt "+fmt(latest().alt,0)+" m",{direction:"top",offset:[0,-6]});
+  if(!launchMarker){ launchMarker=L.circleMarker(pts[0],{radius:5,color:"#fff",weight:2,fillColor:"#46c46a",fillOpacity:1}).addTo(map).bindTooltip("launch"); }
+  if(followMap) map.setView(last);
+}
+function drawTrackFallback(){
+  const c=$("mapFallback"); const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const pts=data.filter(r=>r.lat!=null&&r.lon!=null&&(r.lat!==0||r.lon!==0)).map(r=>[r.lon,r.lat]);
+  if(!pts.length){ nodata(ctx,w,h); return; }
+  let a=Infinity,b=-Infinity,cc=Infinity,d=-Infinity;
+  pts.forEach(p=>{a=Math.min(a,p[0]);b=Math.max(b,p[0]);cc=Math.min(cc,p[1]);d=Math.max(d,p[1]);});
+  let dx=b-a||.001,dy=d-cc||.001;a-=dx*.1;b+=dx*.1;cc-=dy*.1;d+=dy*.1;dx=b-a;dy=d-cc;
+  const X=x=>30+(x-a)/dx*(w-60),Y=y=>h-30-(y-cc)/dy*(h-60);
+  ctx.strokeStyle="#4a9eff";ctx.lineWidth=2;ctx.beginPath();
+  pts.forEach((p,k)=>{const xx=X(p[0]),yy=Y(p[1]);k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();
+  const L2=pts[pts.length-1];ctx.fillStyle="#f0556b";ctx.beginPath();ctx.arc(X(L2[0]),Y(L2[1]),4,0,7);ctx.fill();
+  ctx.fillStyle="#46c46a";ctx.beginPath();ctx.arc(X(pts[0][0]),Y(pts[0][1]),3,0,7);ctx.fill();
+}
+
+// ============================================================================
+//  Radio setup tab
+// ============================================================================
+function selCh(){ return parseInt($("chSel").value,10); }
+function updateRadio(){
+  const r=latest();
+  // If we connected mid-stream and missed the boot "# RXCH" line, infer the
+  // receiver channel from the live link: data only flows when they match.
+  const linkLive = lastPktMs && (performance.now()-lastPktMs)<7000;
+  let rxCh = rxChannel;
+  if(rxCh==null && linkLive && r && r.sondeCh!=null) rxCh=r.sondeCh;
+  $("rxChBig").textContent= rxCh!=null? "ch "+rxCh : "ch --";
+  $("rxChSub").textContent= rxCh!=null? freqOf(rxCh)+" MHz"+(rxChannel==null&&linkLive?" · live link":"")
+                                       : "Unknown — tune it below.";
+  if(r&&r.sondeCh!=null){
+    $("sondeChBig").textContent="ch "+r.sondeCh;
+    if(r.locked) $("sondeState").innerHTML='<span class="ok-txt">LOCKED · '+freqOf(r.sondeCh)+' MHz</span>';
+    else $("sondeState").innerHTML='staged · '+freqOf(r.sondeCh)+' MHz';
+    const sel=selCh();
+    $("stageStatus").innerHTML = (r.sondeCh===sel)? '<span class="ok-txt">confirmed on ch '+sel+'</span>' : '';
+  } else { $("sondeChBig").textContent="ch --"; $("sondeState").textContent="No telemetry yet."; }
+}
+
+// ============================================================================
+//  Tabs
+// ============================================================================
+function showTab(t){
+  activeTab=t;
+  document.querySelectorAll('nav button[data-tab]').forEach(b=>b.classList.toggle("active",b.dataset.tab===t));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle("active",v.dataset.view===t));
+  if(t==="map"&&mapReady) setTimeout(()=>map.invalidateSize(),60);
+  requestRender();
+}
+
+// ============================================================================
+//  Demo
+// ============================================================================
+function toggleDemo(){
+  if(demoTimer){ clearInterval(demoTimer); demoTimer=null; $("demoBtn").textContent="Demo"; log("Demo stopped."); return; }
+  $("demoBtn").textContent="Stop Demo"; log("Demo mode: synthetic ascent.");
+  let seq=0,p=1010,lat=39.7392,lon=-104.9903,t0=Date.now();
+  demoTimer=setInterval(()=>{
+    if(p<=100){ clearInterval(demoTimer); demoTimer=null; $("demoBtn").textContent="Demo";
+      log("Demo ascent complete (reached 100 hPa)."); return; }
+    p-=4+Math.random()*2; if(p<100)p=100;
+    const alt=44330*(1-Math.pow(p/1013.25,0.1903));
+    const T=15-(alt/1000)*6.5+Math.sin(alt/1500)*2;
+    const rh=Math.max(5,70-alt/250+Math.sin(alt/800)*15);
+    const wd=(alt/120+180)%360, ws=3+alt/600;
+    lat+=0.0011*Math.cos(alt/700); lon+=0.0014*Math.sin(alt/650);
+    const v=4.05-seq*0.00005;
+    const cells=new Array(DEFAULT_COLS.length).fill("0"); const s=(n,x)=>cells[colMap[n]]=String(x);
+    s("rx_ms",Date.now()-t0);s("sonde_id","0x03");s("seq",seq);s("seq_gap",0);s("pkt_count",seq+1);s("proto",2);s("uptime_s",seq);
+    s("gps_fix",1);s("pps",1);s("sats",9+(seq%4));s("utc_date","");s("utc_time",new Date().toISOString().slice(11,19));
+    s("lat_deg",lat.toFixed(7));s("lon_deg",lon.toFixed(7));s("alt_m",alt.toFixed(0));
+    s("speed_mps",ws.toFixed(2));s("course_deg",((wd+180)%360).toFixed(1));
+    s("sht_temp_c",T.toFixed(2));s("sht_rh_pct",rh.toFixed(1));s("ms_press_pa",Math.round(p*100));
+    s("ms_temp_c","NA");s("mcp_raw","NA");s("therm_temp_c",(T-0.3).toFixed(2));s("wind_deg",wd.toFixed(1));
+    s("batt_v",v.toFixed(3));s("current_ma",(120+Math.random()*8).toFixed(0));s("power_mw",(v*125).toFixed(0));
+    s("status_flags","0x03");s("valid_flags","0x6B");
+    ["v_sht","v_ms","v_mcp","v_ina","v_therm","v_wind","v_gps"].forEach(n=>s(n,1));
+    const rssi=-55-Math.round(alt/700)-Math.round(Math.random()*4), noise=-106+Math.round(Math.random()*4);
+    s("rssi_dbm",rssi);s("noise_dbm",noise);s("snr_db",rssi-noise);s("sonde_ch",65);s("locked",1);s("crc_ok",1);
+    const dl=cells.join(","); rawFeedPush(dl); rawLines.push(dl); ingest(parseRecord(cells)); seq++;
+  },300);
+}
+
+// ============================================================================
+//  Wiring
+// ============================================================================
+document.querySelectorAll('nav button[data-tab]').forEach(b=>{
+  if(b.dataset.tab.startsWith("_")) return;
+  b.onclick=()=>showTab(b.dataset.tab);
+});
+(function(){ const sel=$("chSel"); for(let ch=CH_MIN;ch<=CH_MAX;ch++){ const o=document.createElement("option");
+  o.value=ch;o.textContent="ch "+ch+"  ·  "+freqOf(ch)+" MHz"; if(ch===65)o.selected=true; sel.appendChild(o);} })();
+$("chSel").onchange=updateRadio;
+
+// Pairing modal: populate flight-freq dropdown + buttons
+(function(){ const s=$("pmFreq"); for(let ch=CH_MIN;ch<=CH_MAX;ch++){ const o=document.createElement("option");
+  o.value=ch; o.textContent="ch "+ch+" · "+freqOf(ch)+" MHz"; s.appendChild(o);} })();
+$("pmPair").onclick=async ()=>{
+  pairedId=pmDetId; updatePairedBadge();
+  const ch=parseInt($("pmFreq").value,10);
+  if(ch!==pmDetCh){ sendSerial("STAGE "+ch); $("chSel").value=String(ch);
+    log("Paired "+pairedId+" — staging ch "+ch+" ("+freqOf(ch)+" MHz). Open Radio Setup to Lock & Launch."); }
+  else log("Paired "+pairedId+" on ch "+pmDetCh+".");
+  // set the save location FIRST (so the server creates the folder there), then record
+  const dir=$("pmSaveDir").value.trim();
+  if(dir){ try{ localStorage.setItem("pth_savedir",dir);}catch(e){} if($("setSaveDir")) $("setSaveDir").value=dir; await postSaveDir(dir); }
+  closePair();
+  flightArmed=true; flightDone=false;
+  await ensureSaving();      // create flight folder + flush buffered rows -> recording begins
+};
+$("pmIgnore").onclick=()=>{ if(pmDetId!=null) pairDismissed.add(pmDetId); closePair(); };
+
+// Plot axis-mode toggle (Time / Alt on X / Alt on Y)
+document.querySelectorAll('.ptoolbar button[data-mode]').forEach(b=>{
+  b.onclick=()=>{ plotMode=b.dataset.mode;
+    document.querySelectorAll('.ptoolbar button[data-mode]').forEach(x=>x.classList.toggle("active",x===b));
+    $("axisNote").textContent = plotMode==="time" ? "altitude = barometric" : "altitude = barometric (m)";
+    requestRender(); };
+});
+
+$("connectBtn").onclick=()=>{ keepReading?disconnect():connect(); };
+$("demoBtn").onclick=toggleDemo;
+$("stopFlightBtn").onclick=()=>{ if(confirm("Stop the flight?\n\nThis ends recording to the CSV. You can then Process it on the Analysis tab.")) stopFlight(); };
+
+function clearData(){
+  data.length=0;rawLines.length=0;pktCount=0;crcErrors=0;totalGaps=0;lastSeq=null;firstSeq=null;launchHpa=null;
+  flightActive=false; flightName=null; flightDone=false; flightStarting=false; flightArmed=false; setRecDot(); updateFlightUi();  // arm a fresh auto-flight
+  measuredWind.length=0; lastPredictMs=0;          // fresh measured-wind profile for the new flight
+  if(map&&posMarker){map.removeLayer(posMarker);posMarker=null;} if(map&&launchMarker){map.removeLayer(launchMarker);launchMarker=null;}
+  render();
+}
+$("clearBtn").onclick=()=>{ clearData(); log("Cleared."); };
+
+// right-pane view toggle: Sounding <-> System Health
+document.querySelectorAll('.rtoggle button[data-rview]').forEach(b=>{
+  b.onclick=()=>{ rView=b.dataset.rview;
+    document.querySelectorAll('.rtoggle button[data-rview]').forEach(x=>x.classList.toggle("active",x===b));
+    document.querySelectorAll('.rview').forEach(p=>{ p.hidden=(p.dataset.rv!==rView); });
+    requestRender();
+    if(rView==="map"&&mapReady) setTimeout(()=>map.invalidateSize(),60); };
+});
+
+// ---- Import a saved flight CSV (replay a past data.csv into the dashboard) ---
+// Accepts a raw or processed data.csv: skips the "# SOUNDING ANALYSIS" comment
+// block, reads the rx_ms header for column mapping, replays the data rows.
+function importFlightCsv(text,name){
+  if(flightActive){ log("End the live flight before importing.",true); return; }
+  clearData();
+  headerLine=DEFAULT_COLS.join(","); colMap={}; DEFAULT_COLS.forEach((n,i)=>colMap[n]=i);
+  flightName=null;                                  // not tied to a server folder until Process
+  const wasPaused=paused; paused=true;              // ingest silently, render once at the end
+  importing=true; flightDone=true;                  // replayed data is historical — never auto-saved
+  let rows=0;
+  for(const ln of text.split(/\r?\n/)){
+    const s=ln.trim(); if(!s) continue;
+    if(s[0]==="#") continue;                         // analysis header block
+    if(s.startsWith("rx_ms")){ headerLine=s; const p=s.split(","); colMap={}; p.forEach((n,i)=>colMap[n.trim()]=i); continue; }
+    const cells=s.split(","); if(cells.length<10) continue;
+    rawLines.push(s); const r=parseRecord(cells); if(r){ ingest(r); rows++; }
+  }
+  paused=wasPaused; importing=false;
+  if(!rows){ log("No telemetry rows found in "+(name||"file")+".",true); return; }
+  setAnalysisEnabled(true); showTab("profile"); requestRender();
+  $("flightStatus").innerHTML='Imported <b>'+(name||'flight')+'</b> — '+rows+' rows. Click <b>Process Flight</b> below to render the SHARPpy panel.';
+  log("Imported "+rows+" rows from "+(name||"CSV")+".");
+}
+$("importBtn").onclick=()=>$("importFile").click();
+$("importFile").onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ importFlightCsv(String(rd.result),f.name); }catch(err){ log("Import failed: "+err.message,true); } };
+  rd.onerror=()=>log("Could not read file.",true);
+  rd.readAsText(f); e.target.value=""; };
+
+function setAnalysisEnabled(on){
+  document.querySelector('nav button[data-tab="analysis"]').classList.toggle("tabdisabled", !on); }
+// reflect recording state on the little dot in the nav
+function setRecDot(){ const d=$("recDot"); if(!d) return;
+  d.className = "recdot" + (flightActive ? " on" : (flightDone ? " done" : "")); }
+$("followBtn").onclick=()=>{ followMap=!followMap; $("followBtn").className=followMap?"primary":""; };
+
+$("btnRxCh").onclick=()=>sendSerial("RXCH "+selCh());
+$("btnStage").onclick=()=>{ sendSerial("STAGE "+selCh()); $("stageStatus").textContent="command sent, waiting for sonde…"; };
+$("btnPing").onclick=()=>sendSerial("PING");
+$("btnScan").onclick=()=>sendSerial("SCAN");
+$("btnLock").onclick=()=>{ const ch=selCh();
+  if(confirm("Lock & Launch the sonde on channel "+ch+" ("+freqOf(ch)+" MHz)?\n\nThis is final until the sonde is power-cycled."))
+    sendSerial("LOCK "+ch); };
+function sendConsole(){ const v=$("cmdInput").value.trim(); if(!v)return; sendSerial(v); $("cmdInput").value=""; }
+$("cmdSend").onclick=sendConsole;
+$("cmdInput").addEventListener("keydown",e=>{ if(e.key==="Enter") sendConsole(); });
+
+setInterval(()=>{ if(lastPktMs){ const s=(performance.now()-lastPktMs)/1000;
+  $("lastPkt").textContent=s<1.5?"live":s.toFixed(0)+"s ago"; } },1000);
+window.addEventListener("resize",()=>requestRender());
+
+// ============================================================================
+//  Flight processing — talks to processor/sonde_server.py on localhost:8765
+// ============================================================================
+// When the page is served by the Python app itself, talk to it same-origin;
+// when opened as a bare file://, fall back to the local server port.
+const PROC=(location.protocol==="http:"||location.protocol==="https:")?location.origin:"http://127.0.0.1:8765";
+let flightActive=false, flightName=null;
+async function newFlight(){
+  flightActive=false;
+  try{
+    const r=await fetch(PROC+"/flight/new",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const j=await r.json(); flightName=j.name; flightActive=true;
+    log("Flight folder created: "+j.name);
+  }catch(e){
+    $("flightStatus").innerHTML='<span class="bad-txt">Processor not reachable.</span> Start it: python processor/sonde_server.py';
+    log("Couldn't start flight — is sonde_server.py running on :8765?  "+e.message,true);
+  }
+}
+function appendFlight(line){
+  if(!flightActive) return;
+  fetch(PROC+"/flight/append",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({header:headerLine,line})}).catch(()=>{});   // bulk re-sent at process time anyway
+}
+// Called for every incoming telemetry row. The first row that arrives with no
+// active flight auto-creates the disk folder and flushes the buffer; after that
+// each row streams to disk. Saving stops only once Process ends the flight.
+function saveLine(line){
+  if(importing || flightDone || demoTimer) return;
+  if(flightActive) appendFlight(line);
+  else if(flightArmed) ensureSaving();   // only after the user paired & chose to record
+}
+async function ensureSaving(){
+  if(importing || flightActive || flightDone || flightStarting || !flightArmed) return;
+  flightStarting=true;
+  await newFlight();                 // sets flightActive + flightName on success
+  flightStarting=false;
+  if(flightActive){
+    for(const ln of rawLines) appendFlight(ln);     // flush everything captured so far
+    setAnalysisEnabled(false); setRecDot(); updateFlightUi();
+    $("flightStatus").innerHTML='● Recording <b>'+flightName+'</b> to disk — press <b>Stop Flight</b> (top bar) to end, then Process here.';
+  }else{
+    $("flightStatus").innerHTML='<span class="bad-txt">Processor not reachable.</span> Buffering in the browser — saving starts when the server is up.';
+  }
+}
+// Show/hide the Stop Flight button to match the recording state.
+function updateFlightUi(){ const b=$("stopFlightBtn"); if(b) b.style.display=flightActive?"inline-block":"none"; }
+// Stop recording (without processing). Frees the Analysis tab to process + append.
+function stopFlight(){
+  if(!flightActive){ return; }
+  flightActive=false; flightArmed=false; flightDone=true;
+  setRecDot(); updateFlightUi(); setAnalysisEnabled(true);
+  $("flightStatus").innerHTML='Flight <b>'+(flightName||'')+'</b> stopped — recording ended. Click <b>Process Flight</b> to render + append the sounding.';
+  log("Flight stopped — recording ended. Analysis unlocked.");
+  showTab("analysis");
+}
+async function processFlight(){
+  if(!rawLines.length){ log("No telemetry captured to process. Stop a flight or Demo first.",true); return; }
+  // Stop Flight normally ends recording first; if it's still live, end it now too.
+  if(flightActive){ flightActive=false; flightArmed=false; setRecDot(); updateFlightUi(); }
+  if(!flightName){ flightArmed=true; await newFlight(); flightArmed=false; if(!flightName) return; }  // auto-create folder (Demo/import)
+  $("flightStatus").textContent="Processing through SHARPpy…"; log("Processing flight…");
+  try{
+    const r=await fetch(PROC+"/flight/process",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({header:headerLine,rows:rawLines})});
+    const j=await r.json();
+    if(j.error){ $("flightStatus").innerHTML='<span class="bad-txt">'+j.error+'</span>'; log("Process error: "+j.error,true); return; }
+    $("skewtImg").src=j.image; $("aimgEmpty").style.display="none";
+    const idx=j.indices||{}, keys=Object.keys(idx);
+    $("idxTable").querySelector("tbody").innerHTML = keys.length
+      ? keys.map(k=>`<tr><td>${k}</td><td>${idx[k]==null?'NA':idx[k]}</td></tr>`).join("")
+      : '<tr><td colspan="2" class="muted">no indices (SHARPpy not installed)</td></tr>';
+    flightActive=false; flightArmed=false; flightDone=true; setRecDot(); updateFlightUi();   // flight ended; saving stops until Clear
+    setAnalysisEnabled(true); showTab("analysis");
+    $("flightStatus").innerHTML='Processed <b>'+j.flight+'</b> · '+j.levels+' levels · flight ended · indices written to data.csv'+(j.note?' · <span class="warn-txt">'+j.note+'</span>':'');
+    log("Processed "+j.levels+" levels — flight ended."+(j.note?"  "+j.note:""));
+  }catch(e){ $("flightStatus").innerHTML='<span class="bad-txt">Processor not reachable.</span>'; log("Process failed: "+e.message,true); }
+}
+$("processBtn").onclick=processFlight;
+$("skewtImg").onclick=()=>{ const s=$("skewtImg").getAttribute("src"); if(!s) return;
+  fetch(s).then(r=>r.blob()).then(b=>window.open(URL.createObjectURL(b),"_blank")).catch(()=>{}); };
+
+// ============================================================================
+//  Flight Simulation — GFS-fed ascent/descent landing predictor.
+//  Self-contained (no processor needed). GFS winds come from Open-Meteo in the
+//  browser; the descent uses a physical terminal-velocity model scaled by ISA
+//  air density; during a live flight the sonde's own GPS-derived winds override
+//  GFS for already-flown altitudes, so the landing prediction sharpens in flight.
+// ============================================================================
+const PI=Math.PI, D2R=PI/180;
+const GFS_LEVELS=[1000,925,850,700,600,500,400,300,250,200,150,100,70,50,30,10];
+let gfsProfiles=[];          // [{tMs, pts:[{p,alt,u,v,ws,wd}]}], pts sorted by alt asc
+let measuredWind=[];         // [{alt,u,v}] from live telemetry, sorted by alt asc
+let lastPrediction=null, baselinePrediction=null, lastPredictMs=0, simPanelOpen=false;
+
+function toggleSimPanel(on){
+  simPanelOpen = (on==null)? !simPanelOpen : on;
+  $("simPanel").classList.toggle("open",simPanelOpen);
+  $("simToggle").classList.toggle("open",simPanelOpen);
+  if(simPanelOpen){ if(mapReady) setTimeout(()=>map.invalidateSize(),60); updateSim(); if(lastPrediction) showResults(lastPrediction); }
+  else if(pickMode) setPickMode(false);
+}
+
+function simStatus(m,err){ const e=$("simStatus"); if(!e)return; e.textContent=m; e.classList.toggle("err",!!err); }
+
+// ---- launch point / pick-on-map -------------------------------------------
+function setLaunch(lat,lon){
+  $("simLat").value=lat.toFixed(5); $("simLon").value=lon.toFixed(5);
+  if(mapReady){
+    if(!launchSelMarker) launchSelMarker=L.circleMarker([lat,lon],{radius:6,color:"#fff",weight:2,fillColor:"#22d3ee",fillOpacity:1}).addTo(map).bindTooltip("launch (sim)");
+    else launchSelMarker.setLatLng([lat,lon]);
+  }
+}
+function setPickMode(on){ pickMode=on; $("simPick").classList.toggle("pickactive",on);
+  if(on) simStatus("Click anywhere on the map to set the launch point."); }
+
+// ---- atmosphere & parachute physics ---------------------------------------
+function isaRho(z){                              // ISA air density (kg/m^3)
+  const g=9.80665,R=287.05; let T,P;
+  if(z<11000){ T=288.15-0.0065*z; P=101325*Math.pow(T/288.15,5.2559); }
+  else if(z<20000){ T=216.65; P=22632*Math.exp(-g*(z-11000)/(R*T)); }
+  else { T=216.65+0.001*(z-20000); P=5474.9*Math.pow(T/216.65,-g/(R*0.001)); }
+  return P/(R*T);
+}
+function vTerm(z,m,Cd,A){ return Math.sqrt(2*m*9.80665/(isaRho(Math.max(0,z))*Cd*A)); }
+
+function simParams(){
+  const m=parseFloat($("simMass").value)/1000, Cd=parseFloat($("simCd").value);
+  const d=parseFloat($("simChute").value)/100, A=PI*Math.pow(d/2,2);
+  const o={ascRate:parseFloat($("simAsc").value), burstAlt:parseFloat($("simBurst").value),
+           ground:parseFloat($("simElev").value), m, Cd, A};
+  for(const k of ["ascRate","burstAlt","ground","m","Cd"]) if(isNaN(o[k])) return null;
+  if(!(A>0)||isNaN(A)) return null;
+  return o;
+}
+function updateDescNote(){ const p=simParams(); if(!p){ $("simDescNote").textContent="descent —"; return; }
+  const g=vTerm(p.ground,p.m,p.Cd,p.A), b=vTerm(p.burstAlt,p.m,p.Cd,p.A);
+  $("simDescNote").textContent="descent ≈ "+g.toFixed(1)+" m/s near ground · "+b.toFixed(0)+" m/s at burst"; }
+
+// ---- wind helpers ----------------------------------------------------------
+function windAtAlt(pts,z){                       // linear interp by altitude, clamp ends
+  if(!pts||!pts.length) return {u:0,v:0};
+  if(z<=pts[0].alt) return {u:pts[0].u,v:pts[0].v};
+  const n=pts.length; if(z>=pts[n-1].alt) return {u:pts[n-1].u,v:pts[n-1].v};
+  let i=0; while(i<n-1 && pts[i+1].alt<z) i++;
+  const a=pts[i],b=pts[i+1],f=(z-a.alt)/(b.alt-a.alt||1);
+  return {u:a.u+(b.u-a.u)*f, v:a.v+(b.v-a.v)*f};
+}
+function gfsProfileAt(tMs){                       // time-interp GFS profile (alt,u,v)
+  const P=gfsProfiles; if(!P.length) return [];
+  if(tMs<=P[0].tMs) return P[0].pts;
+  if(tMs>=P[P.length-1].tMs) return P[P.length-1].pts;
+  let i=0; while(i<P.length-1 && P[i+1].tMs<tMs) i++;
+  const a=P[i],b=P[i+1],f=(tMs-a.tMs)/(b.tMs-a.tMs||1), n=Math.min(a.pts.length,b.pts.length), out=[];
+  for(let k=0;k<n;k++) out.push({alt:a.pts[k].alt+(b.pts[k].alt-a.pts[k].alt)*f,
+    u:a.pts[k].u+(b.pts[k].u-a.pts[k].u)*f, v:a.pts[k].v+(b.pts[k].v-a.pts[k].v)*f});
+  return out;
+}
+function gfsProfileNearest(tMs){ if(!gfsProfiles.length)return[]; let best=gfsProfiles[0],bd=Infinity;
+  for(const pr of gfsProfiles){ const d=Math.abs(pr.tMs-tMs); if(d<bd){bd=d;best=pr;} } return best.pts; }
+function combinedWindAt(z,gfsPts){               // sonde-measured winds override GFS where flown
+  if(measuredWind.length>=2 && z>=measuredWind[0].alt && z<=measuredWind[measuredWind.length-1].alt)
+    return windAtAlt(measuredWind,z);
+  return windAtAlt(gfsPts,z);
+}
+function uvToMet(u,v){ const sp=Math.hypot(u,v); let d=Math.atan2(-u,-v)/D2R; return {sp,d:(d+360)%360}; }
+
+function buildMeasured(){                         // free balloon: GPS ground velocity == wind
+  measuredWind=[];
+  for(const r of data){ if(!r.fix||r.alt==null||r.speed==null||r.course==null) continue;
+    const a=r.course*D2R; measuredWind.push({alt:r.alt, u:r.speed*Math.sin(a), v:r.speed*Math.cos(a)}); }
+  measuredWind.sort((x,y)=>x.alt-y.alt);
+}
+
+// ---- the simulation --------------------------------------------------------
+function simulate(o){
+  const dt=5, MAX=20000; let lat=o.lat0,lon=o.lon0,z=o.z0,t=o.t0Ms,steps=0;
+  const ascent=[[lat,lon]], descent=[];
+  const advance=w=>{ lat+=w.v*dt/111320; lon+=w.u*dt/(111320*Math.max(0.05,Math.cos(lat*D2R))); };
+  const wind=zz=>{ const g=gfsProfileAt(t); return o.gfsOnly?windAtAlt(g,zz):combinedWindAt(zz,g); };
+  if(o.phase==="ascent"){
+    while(z<o.burstAlt && steps++<MAX){
+      const w=wind(z); z=Math.min(o.burstAlt,z+o.ascRate*dt);
+      advance(w); t+=dt*1000; ascent.push([lat,lon]); }
+  }
+  const burstMs=t, maxAlt=z; descent.push([lat,lon]);
+  while(z>o.ground && steps++<MAX){
+    const w=wind(z); z=Math.max(o.ground, z-vTerm(z,o.m,o.Cd,o.A)*dt);
+    advance(w); t+=dt*1000; descent.push([lat,lon]); }
+  return {launchLat:o.lat0, launchLon:o.lon0, ascent, descent, landing:{lat,lon},
+          maxAlt, burstTime:(burstMs-o.t0Ms)/1000, descentTime:(t-burstMs)/1000,
+          totalTime:(t-o.t0Ms)/1000, etaMs:t};
+}
+
+// ---- GFS fetch (Open-Meteo) -----------------------------------------------
+async function fetchGFS(lat,lon,tMs){
+  const vars=[]; GFS_LEVELS.forEach(l=>vars.push("wind_speed_"+l+"hPa","wind_direction_"+l+"hPa","geopotential_height_"+l+"hPa"));
+  const start=new Date(tMs).toISOString().slice(0,10);
+  const end=new Date(tMs+24*3600e3).toISOString().slice(0,10);
+  const url="https://api.open-meteo.com/v1/forecast?latitude="+lat.toFixed(4)+"&longitude="+lon.toFixed(4)+
+    "&hourly="+vars.join(",")+"&models=gfs_seamless&wind_speed_unit=ms&timezone=GMT&start_date="+start+"&end_date="+end;
+  const r=await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status);
+  const j=await r.json(); const H=j.hourly; if(!H||!H.time) throw new Error("no hourly data");
+  return H.time.map((ts,hi)=>{
+    const pts=[];
+    GFS_LEVELS.forEach(l=>{ const wsA=H["wind_speed_"+l+"hPa"], wdA=H["wind_direction_"+l+"hPa"], hA=H["geopotential_height_"+l+"hPa"];
+      if(!wsA||!wdA||!hA) return; const ws=wsA[hi], wd=wdA[hi], h=hA[hi];
+      if(ws==null||wd==null||h==null) return; const a=wd*D2R;
+      pts.push({p:l, alt:h, u:-ws*Math.sin(a), v:-ws*Math.cos(a), ws, wd}); });
+    pts.sort((x,y)=>x.alt-y.alt);
+    return {tMs:Date.parse(ts+"Z"), pts};
+  }).filter(pr=>pr.pts.length);
+}
+
+// ---- run a fresh prediction from the launch point --------------------------
+function launchTimeMs(){ const v=$("simTime").value; if(!v) return Date.now();
+  const t=Date.parse(v+"Z"); return isNaN(t)?Date.now():t; }
+async function runPredict(){
+  const lat=parseFloat($("simLat").value), lon=parseFloat($("simLon").value);
+  if(isNaN(lat)||isNaN(lon)){ simStatus("Set a launch lat/lon — use 'Use sonde position' or 'Pick on map'.",true); return; }
+  const p=simParams(); if(!p){ simStatus("Check the balloon/payload numbers.",true); return; }
+  const tMs=launchTimeMs();
+  simStatus("Fetching GFS winds from Open-Meteo…");
+  try{ gfsProfiles=await fetchGFS(lat,lon,tMs); }
+  catch(e){ simStatus("GFS fetch failed: "+e.message+" — check your connection.",true); return; }
+  if(!gfsProfiles.length){ simStatus("No GFS data returned for that point/time.",true); return; }
+  buildMeasured();
+  // Freeze the initial GFS-only prediction (no measured winds) as a baseline to compare against.
+  baselinePrediction=simulate(Object.assign({lat0:lat,lon0:lon,z0:p.ground,phase:"ascent",t0Ms:tMs,gfsOnly:true},p));
+  drawBaseline(baselinePrediction);
+  const res=simulate(Object.assign({lat0:lat,lon0:lon,z0:p.ground,phase:"ascent",t0Ms:tMs},p));
+  lastPrediction=res; drawPrediction(res); showResults(res);
+  $("windSrc").textContent="GFS · "+new Date(gfsProfiles[0].tMs).toISOString().slice(0,16).replace("T"," ")+"Z";
+  renderWindTable(gfsProfileNearest(tMs));
+  simStatus("Predicted landing "+res.landing.lat.toFixed(4)+", "+res.landing.lon.toFixed(4)+" · "+fmtDur(res.totalTime)+" flight. Start a flight to refine the descent live.");
+}
+
+// ---- live in-flight refinement (throttled, runs every render) --------------
+function currentlyDescending(){ const n=data.length; if(n<4) return false;
+  const a=data[n-1].alt, b=data[Math.max(0,n-4)].alt; return a!=null&&b!=null&&a<b-2; }
+function maybeLivePredict(){
+  const auto=$("simAuto"); if(!auto||!auto.checked||!gfsProfiles.length) return;
+  if(!flightActive && !demoTimer) return;
+  const r=latest(); if(!r||r.lat==null||r.lon==null||r.alt==null) return;
+  const now=performance.now(); if(now-lastPredictMs<1200) return; lastPredictMs=now;
+  const p=simParams(); if(!p) return;
+  buildMeasured();
+  const elapsed=data.length?(r.tSec-data[0].tSec):0;
+  const res=simulate(Object.assign({lat0:r.lat,lon0:r.lon,z0:r.alt,
+    phase:currentlyDescending()?"descent":"ascent", t0Ms:launchTimeMs()+elapsed*1000},p));
+  lastPrediction=res; drawPrediction(res);
+  if(simPanelOpen){ showResults(res); renderWindTable(gfsProfileNearest(launchTimeMs()+elapsed*1000)); }
+}
+
+// ---- map overlay + results -------------------------------------------------
+function drawPrediction(res){
+  if(!mapReady||!res) return;
+  predAscentLine.setLatLngs(res.ascent||[]); predDescentLine.setLatLngs(res.descent||[]);
+  const Lp=res.landing;
+  if(!landingMarker) landingMarker=L.circleMarker([Lp.lat,Lp.lon],{radius:7,color:"#fff",weight:2,fillColor:"#f0556b",fillOpacity:.95}).addTo(map);
+  else landingMarker.setLatLng([Lp.lat,Lp.lon]);
+  landingMarker.bindTooltip("predicted landing · "+Lp.lat.toFixed(4)+", "+Lp.lon.toFixed(4),{direction:"top",offset:[0,-6]});
+}
+function drawBaseline(res){
+  if(!mapReady||!res) return;
+  const show=!$("simShowBase")||$("simShowBase").checked;
+  baseAscentLine.setLatLngs(show?(res.ascent||[]):[]);
+  baseDescentLine.setLatLngs(show?(res.descent||[]):[]);
+  const Lp=res.landing;
+  if(!baseLandingMarker) baseLandingMarker=L.circleMarker([Lp.lat,Lp.lon],{radius:6,color:"#7c8aa0",weight:2,fillColor:"#0a0d12",fillOpacity:.9}).addTo(map);
+  else baseLandingMarker.setLatLng([Lp.lat,Lp.lon]);
+  baseLandingMarker.setStyle({opacity:show?1:0,fillOpacity:show?.9:0});
+  baseLandingMarker.bindTooltip("initial GFS landing · "+Lp.lat.toFixed(4)+", "+Lp.lon.toFixed(4),{direction:"top",offset:[0,-6]});
+}
+function distBearing(la1,lo1,la2,lo2){ const R=6371;
+  const dLa=(la2-la1)*D2R,dLo=(lo2-lo1)*D2R;
+  const a=Math.sin(dLa/2)**2+Math.cos(la1*D2R)*Math.cos(la2*D2R)*Math.sin(dLo/2)**2;
+  const km=2*R*Math.asin(Math.min(1,Math.sqrt(a)));
+  const y=Math.sin(dLo)*Math.cos(la2*D2R), x=Math.cos(la1*D2R)*Math.sin(la2*D2R)-Math.sin(la1*D2R)*Math.cos(la2*D2R)*Math.cos(dLo);
+  return {km, brg:((Math.atan2(y,x)/D2R)+360)%360}; }
+function fmtDur(s){ if(s==null||isNaN(s))return"--"; s=Math.round(s);
+  const h=Math.floor(s/3600),m=Math.floor(s%3600/60),ss=s%60;
+  return h?h+"h "+m+"m":(m?m+"m "+ss+"s":ss+"s"); }
+function showResults(res){ if(!res) return;
+  $("rLand").textContent=res.landing.lat.toFixed(4)+", "+res.landing.lon.toFixed(4);
+  const db=distBearing(res.launchLat,res.launchLon,res.landing.lat,res.landing.lon);
+  $("rDist").textContent=(db.km>=10?db.km.toFixed(0):db.km.toFixed(1))+" km · "+Math.round(db.brg)+"°";
+  $("rBurst").innerHTML=Math.round(res.maxAlt)+' <small>m</small>';
+  $("rTtb").textContent=res.burstTime>1?fmtDur(res.burstTime):"— (descending)";
+  $("rDesc").textContent=fmtDur(res.descentTime);
+  $("rTot").textContent=fmtDur(res.totalTime);
+  $("rEta").textContent=new Date(res.etaMs).toISOString().slice(11,19);
+  if(baselinePrediction){ const b=baselinePrediction.landing;
+    $("rBase").textContent=b.lat.toFixed(4)+", "+b.lon.toFixed(4);
+    const sh=distBearing(b.lat,b.lon,res.landing.lat,res.landing.lon);
+    $("rShift").textContent=(sh.km>=10?sh.km.toFixed(0):sh.km.toFixed(1))+" km · "+Math.round(sh.brg)+"°";
+  } else { $("rBase").textContent="--"; $("rShift").textContent="--"; }
+}
+function renderWindTable(pts){
+  const tb=$("windBody"); if(!tb) return;
+  if(!pts||!pts.length){ tb.innerHTML='<tr><td colspan="4" class="muted" style="text-align:center">No GFS data.</td></tr>'; return; }
+  const rows=pts.slice().sort((a,b)=>b.p-a.p);   // surface (high hPa) first
+  tb.innerHTML=rows.map(pt=>{ let dir=pt.wd,sp=pt.ws,cls="";
+    if(measuredWind.length>=2 && pt.alt>=measuredWind[0].alt && pt.alt<=measuredWind[measuredWind.length-1].alt){
+      const m=uvToMet(windAtAlt(measuredWind,pt.alt).u,windAtAlt(measuredWind,pt.alt).v); dir=m.d; sp=m.sp; cls="measured"; }
+    return '<tr class="'+cls+'"><td>'+pt.p+'</td><td>'+Math.round(pt.alt)+'</td><td>'+Math.round(dir)+'°</td><td>'+sp.toFixed(1)+' m/s</td></tr>';
+  }).join("");
+}
+function updateSim(){ updateDescNote(); if(lastPrediction) showResults(lastPrediction); }
+
+// ---- sim wiring ------------------------------------------------------------
+$("simToggle").onclick=()=>toggleSimPanel();
+$("simShowBase").addEventListener("change",()=>{ if(baselinePrediction) drawBaseline(baselinePrediction); });
+$("simRun").onclick=runPredict;
+$("simPick").onclick=()=>setPickMode(!pickMode);
+$("simUseSonde").onclick=()=>{ const r=latest();
+  if(r&&r.lat!=null&&r.lon!=null){ setLaunch(r.lat,r.lon);
+    if(r.alt!=null&&r.alt<4000) $("simElev").value=Math.round(r.alt);
+    simStatus("Launch set to current sonde position."); }
+  else simStatus("No sonde position yet — connect or run Demo first.",true); };
+["simMass","simChute","simCd","simAsc","simBurst","simElev"].forEach(id=>{ const el=$(id); if(el) el.addEventListener("input",updateDescNote); });
+(function(){ const el=$("simTime"); if(el) el.value=new Date().toISOString().slice(0,16); })();  // default = now (UTC)
+updateDescNote();
+
+// startup
+// ---- Settings · theme · fullscreen ------------------------------------------
+function applyTheme(t){ document.body.classList.toggle("light",t==="light");
+  document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle("active",b.dataset.theme===t));
+  try{ localStorage.setItem("pth_theme",t); }catch(e){} requestRender(); }
+function postSaveDir(dir){ return fetch(PROC+"/config",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({save_dir:dir})}).catch(()=>{}); }
+$("settingsBtn").onclick=()=>{ $("settingsModal").style.display="flex"; };
+$("setClose").onclick=()=>{ $("settingsModal").style.display="none"; };
+$("settingsModal").onclick=e=>{ if(e.target===$("settingsModal")) $("settingsModal").style.display="none"; };
+document.querySelectorAll('#themeSeg button').forEach(b=>b.onclick=()=>applyTheme(b.dataset.theme));
+$("setBattMah").onchange=()=>{ const v=+$("setBattMah").value; if(v>0){ CR123_MAH=v;
+  try{ localStorage.setItem("pth_battmah",String(v)); }catch(e){} requestRender(); } };
+$("setSaveDir").onchange=()=>{ const v=$("setSaveDir").value.trim();
+  try{ localStorage.setItem("pth_savedir",v); }catch(e){} postSaveDir(v); };
+document.querySelectorAll('#followSeg button').forEach(b=>b.onclick=()=>{ followMap=(b.dataset.follow==="1");
+  document.querySelectorAll('#followSeg button').forEach(x=>x.classList.toggle("active",x===b));
+  const fb=$("followBtn"); if(fb) fb.className=followMap?"primary":""; });
+$("fsBtn").onclick=()=>{ if(!document.fullscreenElement){ const el=document.documentElement;
+    (el.requestFullscreen||el.webkitRequestFullscreen||function(){}).call(el); }
+  else (document.exitFullscreen||document.webkitExitFullscreen||function(){}).call(document); };
+
+// ---- Power-user toggle (reveals the Demo button) ----------------------------
+function applyPowerUser(on){ powerUser=!!on;
+  const d=$("demoBtn"); if(d) d.style.display=powerUser?"inline-block":"none";
+  document.querySelectorAll('#powerSeg button').forEach(b=>b.classList.toggle("active",(b.dataset.power==="1")===powerUser));
+  try{ localStorage.setItem("pth_power",powerUser?"1":"0"); }catch(e){} }
+document.querySelectorAll('#powerSeg button').forEach(b=>b.onclick=()=>applyPowerUser(b.dataset.power==="1"));
+
+// ---- Radio Setup window (opened from Settings) ------------------------------
+$("openRadioBtn").onclick=()=>{ $("settingsModal").style.display="none"; $("radioModal").style.display="flex"; updateRadio(); };
+$("radioClose").onclick=()=>{ $("radioModal").style.display="none"; };
+$("radioModal").onclick=e=>{ if(e.target===$("radioModal")) $("radioModal").style.display="none"; };
+
+// ---- Console: clickable receiver-command list ------------------------------
+(function(){ const host=$("cmdChips"); if(!host) return;
+  const cmds=[["REG","read module registers"],["CFG","re-apply E22 config"],["PING","link check"],
+              ["SCAN","sweep band for a sonde"],["HELP","list receiver commands"],
+              ["RXCH ","set receiver channel (add n)"],["STAGE ","stage channel on sonde (add n)"],
+              ["LOCK ","lock & launch sonde (add n)"]];
+  cmds.forEach(([c,tip])=>{ const b=document.createElement("button"); b.textContent=c.trim(); b.title=tip;
+    b.onclick=()=>{ if(c.endsWith(" ")){ $("cmdInput").value=c; $("cmdInput").focus(); } else sendSerial(c); };
+    host.appendChild(b); }); })();
+(function loadSettings(){
+  let t="dark"; try{ t=localStorage.getItem("pth_theme")||"dark"; }catch(e){}
+  applyTheme(t);
+  try{ const m=localStorage.getItem("pth_battmah"); CR123_MAH=m?+m:CR123_MAH; }catch(e){}
+  if($("setBattMah")) $("setBattMah").value=CR123_MAH;
+  try{ const sd=localStorage.getItem("pth_savedir")||""; if($("setSaveDir")) $("setSaveDir").value=sd; if(sd) postSaveDir(sd); }catch(e){}
+  let pu=false; try{ pu=localStorage.getItem("pth_power")==="1"; }catch(e){}
+  applyPowerUser(pu);
+  // learn the server's default save folder (Documents\PTHSonde) for the pairing popup
+  fetch(PROC+"/config").then(r=>r.json()).then(j=>{ SAVE_DEFAULT=j.default||j.effective||""; }).catch(()=>{});
+})();
+
+window.addEventListener("load",initMap);
+// Populate the serial-port dropdown from the server on startup, then refresh it
+// periodically so a freshly-plugged receiver shows up without a reload.
+refreshPorts();
+setInterval(()=>{ if(!keepReading) refreshPorts(); },4000);
+setAnalysisEnabled(false); updateFlightUi();   // Analysis stays locked until a flight is stopped/imported
+log("Ready. Connect to the receiver's USB port. Pair the sonde when detected to start recording.");
+render();
+</script>
+</body>
+</html>

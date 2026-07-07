@@ -1,0 +1,30 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- SHARPpy render env (453 MB, regenerate from processor/README.md) ----
+processor/venv310/
+processor/venv311/
+
+# ---- PyInstaller build artifacts (the shipped app goes to a GitHub Release) ----
+processor/build/
+processor/dist/
+*.spec.bak
+
+# ---- Flight recordings (personal telemetry, not source) ----
+flight_*/
+processor/flight_*/
+**/data.csv
+**/sharppy.png
+_sounding*.json
+_sounding_in.json
+_test_in.json
+
+# ---- Editor / OS / tooling cruft ----
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+*.tmp

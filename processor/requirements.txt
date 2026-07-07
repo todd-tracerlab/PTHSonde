@@ -1,0 +1,18 @@
+# PTHSonde desktop app — main environment (Python 3.13).
+# Install:  py -3.13 -m pip install -r requirements.txt
+flask>=2.0
+pyserial            # Python owns the ground-receiver COM port
+pywebview           # native desktop window around the dashboard
+numpy
+matplotlib          # Skew-T fallback when the SHARPpy venv isn't present
+
+# Build the standalone PTHSonde.exe (optional):
+#   py -3.13 -m PyInstaller PTHSonde.spec
+pyinstaller
+
+# SHARPpy provides the thermodynamic INDICES on 3.13. It can be finicky to install
+# on new Python/numpy; if it fails, the app still records + shows telemetry and just
+# skips the indices. The real SHARPpy SPC IMAGE is rendered by the separate 3.10
+# venv (venv310) described in README.md, not by this package.
+#   pip install sharppy      (or: pip install git+https://github.com/sharppy/SHARPpy.git)
+sharppy

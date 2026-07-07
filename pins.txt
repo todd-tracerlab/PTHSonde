@@ -1,0 +1,92 @@
+Here is the full map for the board we built, based on the schematic and the successful I²C scan.
+
+ESP32-C3 MCU
+
+Part: ESP32-C3-WROOM-02-N4
+Reference: U8
+
+ESP32 GPIO	Board function
+GPIO0	GPS_RX — receives data from GPS TX
+GPIO1	GPS_TX — sends data to GPS RX
+GPIO2	STATUS_LED
+GPIO3	GPS_1PPS
+GPIO4	I²C SDA
+GPIO5	I²C SCL
+GPIO6	LORA_AUX
+GPIO7	LORA_M0
+GPIO8	originally unused; you added pullup to 3.3 V
+GPIO9	BOOT
+GPIO10	LORA_M1
+GPIO18	USB D−
+GPIO19	USB D+
+GPIO20 / RXD	LORA_TXD — receives LoRa module TX
+GPIO21 / TXD	LORA_RXD — transmits to LoRa module RX
+EN	Reset/enable pin
+I²C sensors
+
+The scanner found all four expected devices:
+
+Address	Part	Measurement	ESP32 pins
+0x40	INA219B-series	Battery voltage/current monitor	SDA GPIO4, SCL GPIO5
+0x44	SHT41A-AD1B-R2	Temperature and relative humidity	SDA GPIO4, SCL GPIO5
+0x4D	MCP3221A5T-I/OT	ADC for thermistor temperature	SDA GPIO4, SCL GPIO5
+0x77	MS561101BA03-50	Pressure and barometric temperature	SDA GPIO4, SCL GPIO5
+
+Your scan:
+
+0x40
+0x44
+0x4D
+0x77
+
+matches the board exactly.
+
+GPS
+
+Part: Quectel L86-M33
+Reference: U11
+Interface: UART, not I²C
+
+GPS signal	ESP32 connection
+GPS TXD1	ESP32 GPIO0 / GPS_RX
+GPS RXD1	ESP32 GPIO1 / GPS_TX
+GPS 1PPS	ESP32 GPIO3
+VCC	3.3 V
+V_BCKP	3.3 V
+GND	GND
+RESET	pulled up through R15
+FORCE_ON	tied to 3.3 V
+EXT ANT	external antenna connection, if used
+
+Typical UART starting configuration is 9600 baud, though the L86 can be reconfigured.
+
+LoRa radio
+
+Part: Ebyte E22-900T22S
+Reference: U10
+Frequency: 850–930 MHz / used at 915 MHz
+Interface: UART plus M0, M1 and AUX
+
+LoRa signal	ESP32 GPIO
+Module TXD	GPIO20 / ESP32 RX
+Module RXD	GPIO21 / ESP32 TX
+AUX	GPIO6
+M0	GPIO7
+M1	GPIO10
+NRST	pulled up with R14 10k
+VCC	3.3 V
+GND	GND
+ANT	ANT_WIRE connection
+
+For the 915 MHz wire antenna, use approximately 3.2 inches for a quarter-wave antenna.
+
+Status LED
+Item	Connection
+D3 status LED	ESP32 GPIO2
+Series resistor	R16, 1k
+Wiring	3.3 V → resistor → LED → GPIO2
+
+This LED is active-low:
+
+GPIO2 LOW = LED on
+GPIO2 HIGH = LED off
