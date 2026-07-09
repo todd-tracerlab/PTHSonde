@@ -38,15 +38,11 @@
   .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
   /* ---- Top bar ---- */
-  header{display:flex;align-items:center;gap:14px;height:50px;flex:none;
-    padding:0 14px;background:linear-gradient(180deg,var(--panel),var(--bg));border-bottom:1px solid var(--line)}
-  .brand{display:flex;align-items:center;gap:11px}
-  .brand .logo{height:34px;width:auto;display:block;border-radius:7px}
-  .brand .brandtxt{display:flex;flex-direction:column;line-height:1}
-  .brand .title{font-size:20px;font-weight:800;letter-spacing:.2px}
-  .brand .title .accent{background:linear-gradient(95deg,var(--accent),#67e8f9);
-    -webkit-background-clip:text;background-clip:text;color:transparent}
-  .brand .sub{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:2.4px;margin-top:3px}
+  header{display:flex;align-items:center;gap:12px;height:58px;flex:none;
+    padding:0 16px;background:linear-gradient(180deg,var(--panel),var(--bg));border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:9px}
+  .brand .logo{height:52px;width:auto;display:block;filter:drop-shadow(0 1px 2.5px rgba(0,0,0,.32))}
+  .brand .wordmark{height:38px;width:auto;display:block}
   .kpis{display:flex;gap:15px;margin-left:6px;padding-left:14px;border-left:1px solid var(--line)}
   .kpi{display:flex;flex-direction:column;line-height:1.05}
   .kpi .l{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px}
@@ -85,6 +81,12 @@
   .body{flex:1;display:flex;min-height:0}
   aside{width:288px;flex:none;background:var(--panel);border-right:1px solid var(--line);
     overflow:hidden;padding:0;display:flex;flex-direction:column}
+  /* company logo pinned to the bottom, filling the leftover sidebar space */
+  .brandfoot{flex:1;display:flex;align-items:flex-end;justify-content:center;
+    padding:16px 16px 20px;min-height:0}
+  .brandfoot .lgcard{width:100%;display:flex;justify-content:center;padding:15px 16px;
+    border-radius:12px;background:rgba(10,15,24,.72)}
+  .brandfoot img{width:100%;max-width:196px;height:auto;display:block;opacity:.95}
   .grp{padding:5px 14px;border-bottom:1px solid var(--line)}
   .grp h3{margin:0 0 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;
     color:var(--txt3);font-weight:600;display:flex;justify-content:space-between;align-items:center}
@@ -299,8 +301,8 @@
 
 <header>
   <div class="brand">
-    <img src="truck.png" alt="logo" class="logo">
-    <div class="brandtxt"><span class="title">PTH<span class="accent">Sonde</span></span><span class="sub">Ground Station</span></div>
+    <img src="truck.png" alt="PTHSonde" class="logo">
+    <img src="pthsonde_logo.png" alt="PTHSonde Ground Station" class="wordmark">
   </div>
   <div class="kpis">
     <div class="kpi"><span class="l">Altitude</span><span class="v"><span id="kAlt">--</span> <small>m</small></span></div>
@@ -402,6 +404,7 @@
       <h3>Sensors</h3>
       <div class="chips" id="chips"></div>
     </div>
+    <div class="brandfoot"><div class="lgcard"><img src="tracerlab.png" alt="TracerLab"></div></div>
   </aside>
 
   <!-- ====================== MAIN (tabbed views) ====================== -->

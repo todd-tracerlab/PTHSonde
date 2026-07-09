@@ -28,3 +28,6 @@ _test_in.json
 Thumbs.db
 .DS_Store
 *.tmp
+
+# local backup of the original (uncropped) truck art
+Dashboard/truck_orig.png

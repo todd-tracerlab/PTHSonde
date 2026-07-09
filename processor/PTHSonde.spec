@@ -42,6 +42,6 @@ exe = EXE(
     exclude_binaries=True,
     name="PTHSonde",
     console=False,                # no console window
-    icon=None,
+    icon=os.path.join(proc, "truck.ico"),   # flying-truck app icon
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="PTHSonde")
