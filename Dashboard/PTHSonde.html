@@ -17,7 +17,7 @@
     --bg:#0a0d12; --panel:#11151c; --panel2:#161b24; --raised:#1b2230;
     --line:#222a36; --line2:#2c3644;
     --txt:#e7edf4; --txt2:#9aa7b6; --txt3:#5f6c7b;
-    --accent:#4a9eff; --accent-dim:#2b5d99; --plotbg:#0b0f15;
+    --accent:#ef8a22; --accent-dim:#b9691a; --plotbg:#0b0f15;
     --good:#3fb950; --warn:#d8a23a; --bad:#f0556b;
     --temp:#ff6b6b; --dew:#46c46a; --therm:#caa24a;
     --mono:"SFMono-Regular",ui-monospace,"Cascadia Code","Consolas",monospace;
@@ -27,7 +27,7 @@
     --bg:#eceff4; --panel:#ffffff; --panel2:#f5f8fc; --raised:#e9eef5;
     --line:#dce2ec; --line2:#c7d0dd;
     --txt:#16202e; --txt2:#46535f; --txt3:#7a8696;
-    --accent-dim:#a9cdf5; --plotbg:#ffffff;   /* white canvas backing in light mode */
+    --accent-dim:#f3c48a; --plotbg:#ffffff;   /* white canvas backing in light mode */
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -38,16 +38,25 @@
   .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
   /* ---- Top bar ---- */
-  header{display:flex;align-items:center;gap:12px;height:58px;flex:none;
+  /* Theme-aware top bar. The logo (and TracerLab) swap to a light-ink variant in
+     dark mode so they read on a dark bar. */
+  header{display:flex;align-items:center;gap:12px;height:60px;flex:none;
     padding:0 16px;background:linear-gradient(180deg,var(--panel),var(--bg));border-bottom:1px solid var(--line)}
   .brand{display:flex;align-items:center;gap:9px}
-  .brand .logo{height:52px;width:auto;display:block;filter:drop-shadow(0 1px 2.5px rgba(0,0,0,.32))}
-  .brand .wordmark{height:38px;width:auto;display:block}
+  .brand img{height:48px;width:auto;display:block}
+  .brand .logo-light{display:none} .brand .logo-dark{display:block}
+  body.light .brand .logo-dark{display:none} body.light .brand .logo-light{display:block}
   .kpis{display:flex;gap:15px;margin-left:6px;padding-left:14px;border-left:1px solid var(--line)}
   .kpi{display:flex;flex-direction:column;line-height:1.05}
   .kpi .l{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px}
-  .kpi .v{font-size:15px;font-weight:600;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kpi .v{font-size:15px;font-weight:600;color:var(--txt);font-family:var(--mono);font-variant-numeric:tabular-nums}
   .kpi .v small{font-size:9px;color:var(--txt2);font-weight:400}
+  .hdrbrand{height:34px;width:auto;display:block;opacity:.95}
+  .hdrbrand.tl-light{display:none} .hdrbrand.tl-dark{display:block}
+  body.light .hdrbrand.tl-dark{display:none} body.light .hdrbrand.tl-light{display:block}
+  .hdrtheme{display:flex;background:var(--raised);border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+  .hdrtheme button{padding:5px 11px;font-size:11px;background:transparent;border:none;color:var(--txt2);cursor:pointer;font-weight:600}
+  .hdrtheme button.active{background:var(--accent);color:#231204}
   .spacer{flex:1}
   .battchip{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--txt2);padding:0 2px}
   /* 5-bar signal-strength icon (RSSI-driven) */
@@ -87,13 +96,13 @@
   .brandfoot .lgcard{width:100%;display:flex;justify-content:center;padding:15px 16px;
     border-radius:12px;background:rgba(10,15,24,.72)}
   .brandfoot img{width:100%;max-width:196px;height:auto;display:block;opacity:.95}
-  .grp{padding:5px 14px;border-bottom:1px solid var(--line)}
-  .grp h3{margin:0 0 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;
-    color:var(--txt3);font-weight:600;display:flex;justify-content:space-between;align-items:center}
-  .row{display:flex;justify-content:space-between;align-items:baseline;padding:0.5px 0;font-size:11.5px;line-height:1.35}
+  .grp{padding:7px 16px;border-bottom:1px solid var(--line)}
+  .grp h3{margin:0 0 3px;font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;
+    color:var(--txt3);font-weight:700;display:flex;justify-content:space-between;align-items:center}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:1.5px 0;font-size:13px;line-height:1.5}
   .row .k{color:var(--txt2)}
-  .row .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;text-align:right}
-  .row .val small{color:var(--txt3);font-size:10px;font-weight:400}
+  .row .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right}
+  .row .val small{color:var(--txt3);font-size:11px;font-weight:400}
   .muted{color:var(--txt3)!important}
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
   .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:5px;
@@ -301,11 +310,11 @@
 
 <header>
   <div class="brand">
-    <img src="truck.png" alt="PTHSonde" class="logo">
-    <img src="pthsonde_logo.png" alt="PTHSonde Ground Station" class="wordmark">
+    <img src="brand.png" class="logo-light" alt="PTHSonde">
+    <img src="brand_dark.png" class="logo-dark" alt="PTHSonde">
   </div>
   <div class="kpis">
-    <div class="kpi"><span class="l">Altitude</span><span class="v"><span id="kAlt">--</span> <small>m</small></span></div>
+    <div class="kpi"><span class="l">Press Alt</span><span class="v"><span id="kAlt">--</span> <small>m</small></span></div>
     <div class="kpi"><span class="l">Climb</span><span class="v"><span id="kVs">--</span> <small>m/s</small></span></div>
     <div class="kpi"><span class="l">Speed</span><span class="v"><span id="kSpd">--</span> <small>m/s</small></span></div>
     <div class="kpi"><span class="l">RSSI</span><span class="v"><span id="kRssi">--</span> <small>dBm</small></span></div>
@@ -321,16 +330,18 @@
   </select>
   <button id="connectBtn" class="primary">Connect</button>
   <button id="demoBtn" style="display:none">Demo</button>
+  <div class="seg hdrtheme" id="themeSegHdr"><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
   <button id="fsBtn" class="iconbtn" title="Fullscreen">⛶</button>
   <button id="settingsBtn" class="iconbtn" title="Settings">⚙</button>
+  <div class="spacer"></div>
+  <img src="tracerlab_black.png" class="hdrbrand tl-light" alt="TracerLab">
+  <img src="tracerlab.png" class="hdrbrand tl-dark" alt="TracerLab">
 </header>
 
 <div id="settingsModal" class="modal" style="display:none">
   <div class="modal-box">
     <h2>Settings</h2>
     <div class="sub">Preferences are saved in this browser.</div>
-    <div class="setrow"><label>Appearance</label>
-      <div class="seg" id="themeSeg"><button data-theme="dark" class="active">Dark</button><button data-theme="light">Light</button></div></div>
     <div class="setrow"><label>Save flights to</label>
       <input id="setSaveDir" class="fld mono" style="flex:1;max-width:230px;padding:6px 9px" placeholder="Documents\PTHSonde"></div>
     <div class="setrow"><label>Battery capacity (CR123A)</label>
@@ -404,7 +415,6 @@
       <h3>Sensors</h3>
       <div class="chips" id="chips"></div>
     </div>
-    <div class="brandfoot"><div class="lgcard"><img src="tracerlab.png" alt="TracerLab"></div></div>
   </aside>
 
   <!-- ====================== MAIN (tabbed views) ====================== -->
@@ -416,7 +426,7 @@
       <div class="spacer"></div>
       <span id="recDot" class="recdot" title="recording state">●</span>
       <button id="stopFlightBtn" class="warnbtn" style="display:none">■ Stop Flight</button>
-      <button id="importBtn" style="border:none;color:var(--txt3)">Import CSV</button>
+      <button id="importBtn" style="border:none;color:var(--txt3)">Import Past Flight</button>
       <button id="clearBtn" style="border:none;color:var(--txt3)">Clear</button>
       <input id="importFile" type="file" accept=".csv,text/csv" style="display:none">
     </nav>
@@ -960,7 +970,7 @@ function render(){
 
 function updateKpis(){
   const r=latest();
-  $("kAlt").textContent=r?fmt(r.alt,0):"--";
+  $("kAlt").textContent=r?fmt(pressureAltitude(r.pHpa),0):"--";   // barometric (pressure) altitude
   { const vs=climbNow(); const el=$("kVs");
     el.textContent=(vs==null)?"--":(vs>=0?"+":"")+vs.toFixed(1);
     el.style.color=(vs==null)?"":(vs>=0.2?"var(--good)":vs<=-0.2?"var(--bad)":""); }
@@ -1024,7 +1034,7 @@ function updateSidebar(){
 // ---- Sonde pairing ---------------------------------------------------------
 function maybeShowPair(r){
   if(!r || r.sondeId==null || r.sondeCh==null) return;
-  if(flightArmed || flightActive || importing) return;          // already recording
+  if(flightArmed || flightActive || importing || flightDone) return;   // recording, or viewing an imported/finished flight
   if(pairOpen || pairedId===r.sondeId || pairDismissed.has(r.sondeId)) return;
   pmDetId = r.sondeId; pmDetCh = r.sondeCh;
   $("pmId").textContent = r.sondeId;
@@ -1115,7 +1125,7 @@ function drawSeries(ctx,w,h,series,opts){
   const fx=opts.fixed!=null?opts.fixed:1;
   const afmt=opts.axisFmt||(a=>String(Math.round(a)));
   const TH=plotTheme();
-  ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
+  ctx.font="bold 12px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
   // value axis: hairline gridlines, slightly brighter zero line, labels in the margin
   niceTicks(vmin,vmax,4).forEach(val=>{ const zero=Math.abs(val)<1e-9;
     ctx.strokeStyle=zero?TH.grid0:TH.grid;
@@ -1198,15 +1208,24 @@ function vProfile(canvasId,pts,opt){
   opt=opt||{};
   const c=$(canvasId); if(!c) return;
   const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
-  const mL=34,mR=9,mT=13,mB=18, x0=mL,x1=w-mR,y0=mT,y1=h-mB;
+  const mL=34,mR=26,mT=13,mB=18, x0=mL,x1=w-mR,y0=mT,y1=h-mB;
   if(x1<=x0||y1<=y0) return;
   const lnT=Math.log(SK.Ptop),lnB=Math.log(SK.Pbot);
   const py=p=>y1-((lnB-Math.log(p))/(lnB-lnT))*(y1-y0);
   const TH=plotTheme();
-  ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
+  ctx.font="bold 12px ui-monospace,monospace"; ctx.lineWidth=1; ctx.textBaseline="alphabetic";
   [1000,700,500,300,200,100].forEach(p=>{ if(p>SK.Pbot||p<SK.Ptop)return;
     const yy=py(p); ctx.strokeStyle=TH.grid; ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
     ctx.fillStyle=TH.lbl;ctx.textAlign="right";ctx.fillText(p,x0-4,yy+4); });
+  // right axis: altitude km
+  ctx.fillStyle=TH.lbl;ctx.textAlign="left";
+  [0,4,8,12].forEach(km=>{ const p=1013.25*Math.pow(Math.max(1e-4,1-km*1000/44330),1/0.190284);
+    if(p>SK.Pbot||p<SK.Ptop) return; const yy=py(p);
+    ctx.fillText(km+"k",x1+3,yy+4); });
+  // y-axis unit captions
+  ctx.font="bold 9px ui-monospace,monospace"; ctx.fillStyle=TH.lbl2;
+  ctx.textAlign="right"; ctx.fillText("hPa", x0-3, y0-3);
+  ctx.textAlign="left";  ctx.fillText("km",  x1+2, y0-3);
   if(opt.label){ ctx.fillStyle=TH.lbl2;ctx.textAlign="left";ctx.fillText(opt.label,x0+1,y0-2); }
   if(pts.length<2){ nodata(ctx,w,h); return; }
   let vmin=opt.xmin,vmax=opt.xmax;
@@ -1380,7 +1399,7 @@ function drawPktBars(){
   if(x1<=x0||y1<=y0) return;
   const maxV=Math.max(1,...bars.map(b=>b[1])), slot=(x1-x0)/bars.length, bw=slot*0.5;
   const TH=plotTheme();
-  ctx.font="11px ui-monospace,monospace"; ctx.textBaseline="alphabetic";
+  ctx.font="bold 12px ui-monospace,monospace"; ctx.textBaseline="alphabetic";
   ctx.strokeStyle=TH.gridS; ctx.beginPath();ctx.moveTo(x0,y1+.5);ctx.lineTo(x1,y1+.5);ctx.stroke();
   bars.forEach((b,i)=>{ const cx=x0+slot*(i+0.5), bh=(b[1]/maxV)*(y1-y0);
     ctx.fillStyle=b[2]; ctx.fillRect(cx-bw/2,y1-bh,bw,bh);
@@ -1421,12 +1440,18 @@ function drawSkewT(){
   ctx.restore();
 
   // isobars + labels
-  ctx.strokeStyle=TH.iso; ctx.fillStyle=TH.lbl; ctx.font="11px ui-monospace,monospace"; ctx.lineWidth=0.8; ctx.textAlign="right";
+  ctx.strokeStyle=TH.iso; ctx.fillStyle=TH.lbl; ctx.font="bold 12px ui-monospace,monospace"; ctx.lineWidth=0.8; ctx.textAlign="right";
   [1000,925,850,700,600,500,400,300,250,200,150,100].forEach(p=>{ if(p>SK.Pbot||p<SK.Ptop)return;
     const yy=py(p); ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke(); ctx.fillText(p,x0-4,yy+4); });
   ctx.textAlign="center";
   for(let T=-40;T<=40;T+=10){ const xx=px(T,SK.Pbot); if(xx>x0&&xx<x1) ctx.fillText(T+"°",xx,y1+14); }
   ctx.fillStyle=TH.lbl;ctx.textAlign="left";ctx.fillText("hPa",4,y0+9);
+  // right axis: altitude in km (barometric / standard atmosphere)
+  ctx.fillStyle=TH.lbl;ctx.textAlign="left";ctx.fillText("km",x1+6,y0+9);
+  for(let km=0;km<=16;km+=2){ const p=1013.25*Math.pow(Math.max(1e-4,1-km*1000/44330),1/0.190284);
+    if(p>SK.Pbot||p<SK.Ptop) continue; const yy=py(p);
+    ctx.strokeStyle=TH.iso;ctx.beginPath();ctx.moveTo(x1,yy);ctx.lineTo(x1+4,yy);ctx.stroke();
+    ctx.fillStyle=TH.lbl;ctx.fillText(String(km),x1+6,yy+4); }
 
   // traces (from launch onward — ground rows are heat-soaked garbage)
   const prof=profileData().filter(r=>r.pHpa!=null);
@@ -2100,14 +2125,14 @@ updateDescNote();
 // startup
 // ---- Settings · theme · fullscreen ------------------------------------------
 function applyTheme(t){ document.body.classList.toggle("light",t==="light");
-  document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle("active",b.dataset.theme===t));
+  document.querySelectorAll('#themeSeg button, #themeSegHdr button').forEach(b=>b.classList.toggle("active",b.dataset.theme===t));
   try{ localStorage.setItem("pth_theme",t); }catch(e){} requestRender(); }
 function postSaveDir(dir){ return fetch(PROC+"/config",{method:"POST",headers:{"Content-Type":"application/json"},
   body:JSON.stringify({save_dir:dir})}).catch(()=>{}); }
 $("settingsBtn").onclick=()=>{ $("settingsModal").style.display="flex"; };
 $("setClose").onclick=()=>{ $("settingsModal").style.display="none"; };
 $("settingsModal").onclick=e=>{ if(e.target===$("settingsModal")) $("settingsModal").style.display="none"; };
-document.querySelectorAll('#themeSeg button').forEach(b=>b.onclick=()=>applyTheme(b.dataset.theme));
+document.querySelectorAll('#themeSeg button, #themeSegHdr button').forEach(b=>b.onclick=()=>applyTheme(b.dataset.theme));
 $("setBattMah").onchange=()=>{ const v=+$("setBattMah").value; if(v>0){ CR123_MAH=v;
   try{ localStorage.setItem("pth_battmah",String(v)); }catch(e){} requestRender(); } };
 $("setSaveDir").onchange=()=>{ const v=$("setSaveDir").value.trim();

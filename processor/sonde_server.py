@@ -792,8 +792,34 @@ def render_sharppy_real(pts, out_dir, lat, lon):
     except OSError:
         pass
     if os.path.exists(outpng) and os.path.getsize(outpng) > 2000:
+        _brand_sharppy(outpng)
         return outpng, None
     return None, "render failed: " + ((r.stderr or r.stdout or "")[-300:])
+
+def _brand_sharppy(png_path):
+    """Overlay the PTHSonde logo (top-left) and TracerLab (top-right) onto the
+    black SHARPpy panel, covering its default corner text. Uses the light-ink
+    logo variants so they read on the dark background. Silently no-ops on error."""
+    try:
+        from PIL import Image, ImageDraw
+        base = Image.open(png_path).convert("RGBA")
+        W, H = base.size
+        draw = ImageDraw.Draw(base)
+        pth = os.path.join(DASH, "brand_dark.png")     # light-ink PTHSonde logo
+        tl = os.path.join(DASH, "tracerlab.png")        # light-text TracerLab
+        if os.path.exists(pth):
+            lg = Image.open(pth).convert("RGBA")
+            h = max(1, int(H * 0.058)); w = int(lg.width * h / lg.height); x, y = 16, 10
+            draw.rectangle([0, 0, max(x + w + 14, int(W * 0.23)), y + h + 12], fill=(0, 0, 0, 255))   # hide SHARPpy title
+            base.alpha_composite(lg.resize((w, h), Image.LANCZOS), (x, y))
+        if os.path.exists(tl):
+            tr = Image.open(tl).convert("RGBA")
+            h = max(1, int(H * 0.05)); w = int(tr.width * h / tr.height); x = W - w - 18; y = 12
+            draw.rectangle([x - 14, 0, W, y + h + 12], fill=(0, 0, 0, 255))       # hide SHARPpy version
+            base.alpha_composite(tr.resize((w, h), Image.LANCZOS), (x, y))
+        base.convert("RGB").save(png_path)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------- pipeline -------
 def process_sounding(csv_path, out_dir):
