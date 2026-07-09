@@ -217,6 +217,18 @@
     max-width:420px;opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.warn{border-color:#6b4416;background:#3a2410;color:#ffce85}
+  /* ---- image lightbox (zoom/pan the SHARPpy panel) ---- */
+  #imgLightbox{position:fixed;inset:0;z-index:9500;background:rgba(2,4,8,.93);display:none;
+    align-items:center;justify-content:center;overflow:hidden}
+  #imgLightbox.show{display:flex}
+  #lbImg{transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none;cursor:grab}
+  #lbImg.grabbing{cursor:grabbing}
+  #lbClose{position:fixed;top:14px;right:18px;z-index:9600;background:var(--raised);
+    border:1px solid var(--line2);color:var(--txt);width:34px;height:34px;border-radius:8px;
+    font-size:17px;cursor:pointer;line-height:1}
+  #lbHint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9600;
+    color:var(--txt2);font-size:11.5px;background:var(--raised);border:1px solid var(--line2);
+    padding:5px 12px;border-radius:7px;pointer-events:none}
 
   /* ---- Pairing modal ---- */
   .modal{position:fixed;inset:0;background:rgba(2,4,8,.66);backdrop-filter:blur(3px);
@@ -334,6 +346,10 @@
 
 <div class="banner" id="banner"></div>
 <div id="toastWrap"></div>
+<div id="imgLightbox"><img id="lbImg" alt="sounding">
+  <button id="lbClose" title="Close (Esc)">✕</button>
+  <div id="lbHint">scroll to zoom · drag to pan · double-click to fit · Esc / click background to close</div>
+</div>
 
 <div class="body">
   <!-- ================= SIDEBAR (always-on live telemetry) ================= -->
@@ -1811,8 +1827,28 @@ async function processFlight(){
   }catch(e){ $("flightStatus").innerHTML='<span class="bad-txt">Processor not reachable.</span>'; log("Process failed: "+e.message,true); }
 }
 $("processBtn").onclick=processFlight;
-$("skewtImg").onclick=()=>{ const s=$("skewtImg").getAttribute("src"); if(!s) return;
-  fetch(s).then(r=>r.blob()).then(b=>window.open(URL.createObjectURL(b),"_blank")).catch(()=>{}); };
+// In-app zoom/pan lightbox for the SHARPpy panel. (The old handler did
+// window.open(blob:) which WebView2 can't navigate to -> the Windows "can't open"
+// popup. A DOM overlay works inside the packaged app and lets you actually zoom.)
+(function(){
+  const lb=$("imgLightbox"), img=$("lbImg");
+  let scale=1,tx=0,ty=0,drag=false,sx=0,sy=0;
+  const apply=()=>{ img.style.transform="translate("+tx+"px,"+ty+"px) scale("+scale+")"; };
+  function fit(){ const vw=innerWidth,vh=innerHeight,nw=img.naturalWidth||vw,nh=img.naturalHeight||vh;
+    scale=Math.min(vw/nw,vh/nh)*0.97; tx=(vw-nw*scale)/2; ty=(vh-nh*scale)/2; apply(); }
+  function open(src){ img.src=src; lb.classList.add("show"); if(img.complete&&img.naturalWidth) fit(); else img.onload=fit; }
+  function close(){ lb.classList.remove("show"); }
+  function zoomAt(cx,cy,ns){ ns=Math.max(0.1,Math.min(10,ns)); tx=cx-(cx-tx)*(ns/scale); ty=cy-(cy-ty)*(ns/scale); scale=ns; apply(); }
+  $("skewtImg").onclick=()=>{ const s=$("skewtImg").getAttribute("src"); if(s) open(s); };
+  $("lbClose").onclick=e=>{ e.stopPropagation(); close(); };
+  lb.addEventListener("click",e=>{ if(e.target===lb) close(); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&lb.classList.contains("show")) close(); });
+  lb.addEventListener("wheel",e=>{ e.preventDefault(); zoomAt(e.clientX,e.clientY,scale*(e.deltaY<0?1.15:1/1.15)); },{passive:false});
+  img.addEventListener("mousedown",e=>{ drag=true; sx=e.clientX-tx; sy=e.clientY-ty; img.classList.add("grabbing"); e.preventDefault(); });
+  window.addEventListener("mousemove",e=>{ if(drag){ tx=e.clientX-sx; ty=e.clientY-sy; apply(); } });
+  window.addEventListener("mouseup",()=>{ drag=false; img.classList.remove("grabbing"); });
+  img.addEventListener("dblclick",e=>{ e.stopPropagation(); if(Math.abs(scale-1)<0.02) fit(); else zoomAt(e.clientX,e.clientY,1); });
+})();
 
 // ============================================================================
 //  Flight Simulation — GFS-fed ascent/descent landing predictor.
