@@ -309,6 +309,29 @@ def _num(d, k):
     except ValueError:
         return None
 
+# Centered moving-average window for RH / SHT-temp smoothing. The SHT41 transmits
+# RH in 0.5% steps, which makes the humidity and (derived) dewpoint traces stair-
+# step / look jagged; dithering them with a small centered average recovers a
+# smooth curve. Applied at process time so the saved data.csv AND the SHARPpy
+# dewpoint are smooth. Bump/drop this to taste.
+RH_SMOOTH_WIN = 9
+def _smooth_rows(rows, cols=("sht_rh_pct", "sht_temp_c"), win=RH_SMOOTH_WIN):
+    """Smooth the given numeric columns in place (centered moving average).
+    NA / non-numeric cells are left untouched and skipped in the average.
+    sht_temp_c is smoothed too because it feeds the dewpoint calc; the primary
+    thermistor air temperature (therm_temp_c) is deliberately left raw."""
+    half = win // 2
+    for col in cols:
+        vals = [_num(d, col) for d in rows]
+        fmt = "%.2f" if col == "sht_temp_c" else "%.1f"
+        for i, d in enumerate(rows):
+            if vals[i] is None:
+                continue
+            seg = [vals[j] for j in range(max(0, i - half), min(len(vals), i + half + 1))
+                   if vals[j] is not None]
+            if seg:
+                d[col] = fmt % (sum(seg) / len(seg))
+
 def _median(xs):
     xs = sorted(v for v in xs if v is not None)
     n = len(xs)
@@ -775,6 +798,7 @@ def render_sharppy_real(pts, out_dir, lat, lon):
 # ------------------------------------------------------------- pipeline -------
 def process_sounding(csv_path, out_dir):
     rows, raw = _read_csv(csv_path)
+    _smooth_rows(rows)                     # smooth RH + SHT temp (-> smooth dewpoint)
     pts = build_profile_arrays(rows)
     if len(pts) < 5:
         return {"error": "Not enough valid sounding levels yet (need pressure + temperature)."}
@@ -828,9 +852,17 @@ def process_sounding(csv_path, out_dir):
             ("%.1f" % x["ws"]) if x["ws"] is not None else "NA",
             ("%.1f" % (x["ws"] / 1.94384)) if x["ws"] is not None else "NA"))
     prof_lines.append("# =====================================")
+    # Rewrite the flight CSV: analysis header + the SMOOTHED data rows (clean
+    # header + rows, so re-processing can't accumulate stale comment blocks) +
+    # the processed profile. Reconstructed from the parsed rows so the saved
+    # sht_rh_pct / sht_temp_c carry the smoothing.
+    hdr = list(rows[0].keys()) if rows else []
+    data_lines = [",".join(str(d.get(h, "")) for h in hdr) for d in rows]
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write("\n".join(head) + "\n")
-        f.write("\n".join(raw) + "\n")
+        if hdr:
+            f.write(",".join(hdr) + "\n")
+        f.write("\n".join(data_lines) + "\n")
         f.write("\n".join(prof_lines) + "\n")
 
     return {"flight": STATE["name"], "levels": len(pts),
