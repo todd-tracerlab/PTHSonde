@@ -1,5 +1,6 @@
 #include "CsvOutput.h"
 #include <Arduino.h>
+#include <math.h>
 
 // Column names are kept stable for the dashboard. Fields the v2 packet no longer
 // carries (uptime, date, MS temp, raw ADC) are emitted as "NA"; power is
@@ -40,6 +41,37 @@ void csvPrintRow(const TelemetryPacket* p,
   double power_mw = (p->batt_mv / 1000.0) * (double)p->current_ma;  // V * mA = mW
   int locked = (p->status_flags & TF_STAT_LOCKED) ? 1 : 0;
 
+  // Wind is DERIVED here on the ground from successive GPS fixes (the sonde no
+  // longer sends it). velocity = d(position)/dt, lightly EMA-smoothed to tame GPS
+  // jitter; meteorological wind direction = travel bearing + 180 (the way it's FROM).
+  static bool     w_have = false, w_emaInit = false;
+  static double   w_lastLat = 0, w_lastLon = 0, w_emaU = 0, w_emaV = 0;
+  static uint32_t w_lastMs = 0;
+  double lat = p->lat_e7 / 1e7, lon = p->lon_e7 / 1e7;
+  double speed_mps = 0.0, wind_deg = 0.0;
+  int    v_wind = 0;
+  if (p->status_flags & TF_STAT_GPS_FIX) {
+    if (w_have) {
+      double dt = (double)(rx_ms - w_lastMs) / 1000.0;
+      if (dt > 0.4 && dt < 30.0) {
+        double mlat = ((lat + w_lastLat) * 0.5) * DEG_TO_RAD;
+        double dN = (lat - w_lastLat) * 111320.0;              // metres north
+        double dE = (lon - w_lastLon) * 111320.0 * cos(mlat);  // metres east
+        double u = dE / dt, v = dN / dt;                       // velocity components
+        if (!w_emaInit) { w_emaU = u; w_emaV = v; w_emaInit = true; }
+        else            { w_emaU = 0.5 * u + 0.5 * w_emaU;
+                          w_emaV = 0.5 * v + 0.5 * w_emaV; }
+        speed_mps = sqrt(w_emaU * w_emaU + w_emaV * w_emaV);
+        double travel = atan2(w_emaU, w_emaV) * RAD_TO_DEG;    // 0=N, 90=E (dir of motion)
+        if (travel < 0) travel += 360.0;
+        wind_deg = travel + 180.0;                             // met: direction FROM
+        if (wind_deg >= 360.0) wind_deg -= 360.0;
+        v_wind = 1;
+      }
+    }
+    w_lastLat = lat; w_lastLon = lon; w_lastMs = rx_ms; w_have = true;
+  }
+
   int n = snprintf(buf, sizeof(buf),
     "%lu,0x%02X,%u,%lu,%lu,%u,NA,"                       // rx_ms..uptime_s(NA)
     "%u,%u,%u,,%s,%.7f,%.7f,%u,%.2f,%.2f,"               // gps..course (utc_date empty)
@@ -59,13 +91,13 @@ void csvPrintRow(const TelemetryPacket* p,
     timeStr,
     p->lat_e7 / 1e7, p->lon_e7 / 1e7,
     p->alt_m,
-    p->speed_cms / 100.0,
+    speed_mps,
     p->course_cd / 100.0,
     p->sht_temp_c100 / 100.0,
-    p->sht_rh_x2 / 2.0,
+    p->sht_rh_x10 / 10.0,
     (long)p->press_half_pa * 2,
     p->therm_temp_c100 / 100.0,
-    p->wind_dir_cd / 100.0,
+    wind_deg,
     p->batt_mv / 1000.0,
     (int)p->current_ma,
     power_mw,
@@ -75,7 +107,7 @@ void csvPrintRow(const TelemetryPacket* p,
     (p->valid_flags & TF_VALID_MCP)   ? 1 : 0,
     (p->valid_flags & TF_VALID_INA)   ? 1 : 0,
     (p->valid_flags & TF_VALID_THERM) ? 1 : 0,
-    (p->valid_flags & TF_VALID_WIND)  ? 1 : 0,
+    v_wind,
     (p->valid_flags & TF_VALID_GPS)   ? 1 : 0,
     rssi, noise, snr,
     p->cfg_channel, locked

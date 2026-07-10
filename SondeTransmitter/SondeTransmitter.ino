@@ -27,6 +27,7 @@
 #include "StatusLed.h"
 
 #include <math.h>
+#include <strings.h>   // strcasecmp for the USB STATUS command
 
 // ---- User configuration -----------------------------------------------------
 // Sonde ID: 0 = auto-assign a stable unique ID derived from this chip's factory
@@ -103,9 +104,6 @@ static void sampleSensors() {
 
   BatteryReading b = batteryRead();
   if (b.ok) { aBattV.add(b.voltage_v); aCurr.add(b.current_ma); }
-
-  GpsData g = gpsGet();
-  if (g.fix) windAvgAddSample((float)g.course_deg, (float)g.speed_mps, millis());
 }
 
 // Derive a stable, unique sonde ID from the chip's 48-bit factory MAC.
@@ -151,26 +149,17 @@ static void buildPacket(TelemetryPacket* p) {
   p->lat_e7    = (int32_t)lround(g.lat_deg * 1e7);
   p->lon_e7    = (int32_t)lround(g.lon_deg * 1e7);
   p->alt_m     = toU16cap(lround(g.alt_m));
-  p->speed_cms = toU16cap(lround(g.speed_mps * 100.0));
   p->course_cd = degToCenti(g.course_deg);
   if (g.fix)       status |= TF_STAT_GPS_FIX;
   if (g.ppsActive) status |= TF_STAT_GPS_PPS;
   if (g.sats > 0 || g.fix) valid |= TF_VALID_GPS;
 
-  // ---- Wind: vector average of the GPS track (fed by sampleSensors) --------
-  {
-    float avgCourse = 0.0f, avgSpeed = 0.0f;
-    if (windAvgGet(&avgCourse, &avgSpeed)) {
-      p->speed_cms = toU16cap(lround(avgSpeed * 100.0));   // mean wind speed
-      bool wok = false;
-      float wdeg = windDirectionDeg(avgCourse, avgSpeed, &wok);
-      if (wok) { p->wind_dir_cd = degToCenti(wdeg); valid |= TF_VALID_WIND; }
-    }
-  }
+  // Wind (speed + direction) is derived on the ground from successive GPS fixes,
+  // so it is no longer computed or transmitted here.
 
   // ---- sensors (block-averaged over this TX window) ------------------------
   if (aShtT.ok())  { p->sht_temp_c100 = toC100(aShtT.mean());
-                     p->sht_rh_x2     = toU8cap(lround(aShtRH.mean() * 2.0));
+                     p->sht_rh_x10    = toU16cap(lround(aShtRH.mean() * 10.0));
                      valid |= TF_VALID_SHT; }
   float medP;
   if (pressMedian(&medP)) { p->press_half_pa = toU16cap(lround(medP / 2.0));
@@ -241,20 +230,51 @@ static void printDiag(const TelemetryPacket* p) {
                    : (ack == 2) ? "FAILED -- will cap at ~12km!"
                                 : "INVALID -- will cap at ~12km!";
     Serial.printf("     FR-mode ACK=%d  %s\n", ack, fr); }
-  Serial.printf("     lat=%.7f lon=%.7f alt=%um spd=%.2fm/s crs=%.2fdeg\n",
+  Serial.printf("     lat=%.7f lon=%.7f alt=%um crs=%.2fdeg\n",
                 p->lat_e7 / 1e7, p->lon_e7 / 1e7, p->alt_m,
-                p->speed_cms / 100.0, p->course_cd / 100.0);
-  Serial.printf("SHT  %s T=%.2fC RH=%.1f%%   P %s %.1fPa  Therm %s %.2fC  Wind %s %.2fdeg\n",
+                p->course_cd / 100.0);
+  Serial.printf("SHT  %s T=%.2fC RH=%.1f%%   P %s %.1fPa  Therm %s %.2fC\n",
                 (p->valid_flags & TF_VALID_SHT) ? "ok" : "--",
-                p->sht_temp_c100 / 100.0, p->sht_rh_x2 / 2.0,
+                p->sht_temp_c100 / 100.0, p->sht_rh_x10 / 10.0,
                 (p->valid_flags & TF_VALID_MS) ? "ok" : "--", (double)p->press_half_pa * 2.0,
-                (p->valid_flags & TF_VALID_THERM) ? "ok" : "--", p->therm_temp_c100 / 100.0,
-                (p->valid_flags & TF_VALID_WIND) ? "ok" : "--", p->wind_dir_cd / 100.0);
+                (p->valid_flags & TF_VALID_THERM) ? "ok" : "--", p->therm_temp_c100 / 100.0);
   Serial.printf("PWR  %s V=%.3fV I=%.1fmA   status=0x%02X valid=0x%02X  %u bytes crc=0x%04X\n",
                 (p->valid_flags & TF_VALID_INA) ? "ok" : "--",
                 p->batt_mv / 1000.0, (double)p->current_ma,
                 p->status_flags, p->valid_flags,
                 (unsigned)sizeof(TelemetryPacket), p->crc16);
+}
+
+// ---- USB STATUS command -----------------------------------------------------
+// Answer a bench tool's "STATUS" query on demand with a one-line, live sensor
+// health report. '#' prefix so it's ignored by anything parsing telemetry.
+static char    s_usbLine[24];
+static uint8_t s_usbLen = 0;
+
+static void printSondeStatus() {
+  SensorData s;      sensorsUpdate(&s);       // live read, right now
+  BatteryReading b = batteryRead();
+  GpsData g =        gpsGet();
+  int8_t fr =        gpsFrModeAck();
+  Serial.printf("# STATUS id=0x%02X SHT=%d MS=%d THERM=%d INA=%d LORA=%d GPS=%d "
+                "sats=%u fr=%d T=%.1f RH=%.1f V=%.2f\n",
+                SONDE_ID, s.sht_ok ? 1 : 0, s.ms_ok ? 1 : 0, s.therm_ok ? 1 : 0,
+                b.ok ? 1 : 0, s_loraOk ? 1 : 0, (fr == 3) ? 1 : 0, g.sats, fr,
+                s.sht_ok ? s.sht_temp_c : 0.0, s.sht_ok ? s.sht_rh : 0.0,
+                b.ok ? b.voltage_v : 0.0);
+}
+
+static void pollUsbStatus() {
+  while (Serial.available()) {
+    char ch = (char)Serial.read();
+    if (ch == '\n' || ch == '\r') {
+      if (s_usbLen > 0) { s_usbLine[s_usbLen] = 0;
+        if (!strcasecmp(s_usbLine, "STATUS")) printSondeStatus();
+        s_usbLen = 0; }
+    } else if (s_usbLen < sizeof(s_usbLine) - 1) {
+      s_usbLine[s_usbLen++] = ch;
+    }
+  }
 }
 
 void setup() {
@@ -288,6 +308,7 @@ void setup() {
 void loop() {
   gpsUpdate();
   ledUpdate();
+  pollUsbStatus();     // answer a USB "STATUS" query from the bench tool
 
   // Listen for ground commands. Always drain the UART; act only while unlocked.
   CommandPacket cmd;

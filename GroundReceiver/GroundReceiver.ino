@@ -29,6 +29,10 @@
 static const uint8_t  ACCEPT_SONDE_ID = 0x00;     // 0 = accept all
 static const uint8_t  TARGET_SONDE_ID = 0xFF;     // command target (0xFF = broadcast)
 
+// ---- Ground-station ID: stable, unique per board (same scheme as the sonde) --
+static const uint8_t  STATION_ID_OVERRIDE = 0x00; // 0 = auto from chip MAC
+static uint8_t        STATION_ID          = 0x01; // resolved in setup()
+
 // ---- State ------------------------------------------------------------------
 static uint32_t s_pktCount    = 0;
 static uint32_t s_lastSeq     = 0;
@@ -99,9 +103,12 @@ static void handleSerialLine(char* line) {
                                                     Serial.println(F("# HOLD: M0/M1 forced HIGH (config). Type RUN to restore.")); }
   else if (!strcasecmp(cmd, "RUN"))               { loraHoldConfig(false);
                                                     Serial.println(F("# RUN: M0/M1 forced LOW (transparent).")); }
+  else if (!strcasecmp(cmd, "STATUS"))            { Serial.printf("# STATUS id=0x%02X E22=%s rxch=%u pkts=%lu\n",
+                                                      STATION_ID, s_cfgOk ? "ok" : "FAIL",
+                                                      loraGetChannel(), (unsigned long)s_pktCount); }
   else if (!strcasecmp(cmd, "TXTEST"))            { loraTxTest(); }
   else if (!strcasecmp(cmd, "MODETEST"))          { loraModeTest(); }
-  else if (!strcasecmp(cmd, "HELP"))              { Serial.println(F("# cmds: REG CFG TXTEST MODETEST HOLD RUN PING SCAN RXCH<n> STAGE<n> LOCK<n>")); }
+  else if (!strcasecmp(cmd, "HELP"))              { Serial.println(F("# cmds: STATUS REG CFG TXTEST MODETEST HOLD RUN PING SCAN RXCH<n> STAGE<n> LOCK<n>")); }
   else { Serial.printf("# ERR unknown command: %s\n", line); }
 }
 
@@ -116,6 +123,14 @@ static void pollSerialCommands() {
   }
 }
 
+// ---- Ground-station ID (FNV-1a over the 48-bit factory MAC, folded to 1..254) --
+static uint8_t deriveStationId() {
+  uint64_t mac = ESP.getEfuseMac();
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < 6; i++) { h ^= (uint8_t)(mac >> (8 * i)); h *= 16777619u; }
+  return (uint8_t)(1 + (h % 254));
+}
+
 void setup() {
   Serial.begin(115200);
   // Native ESP32-C3 USB-CDC: by default a write BLOCKS when the host (browser)
@@ -125,6 +140,10 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   delay(200);
   Serial.println(F("# GroundReceiver starting..."));
+
+  STATION_ID = STATION_ID_OVERRIDE ? STATION_ID_OVERRIDE : deriveStationId();
+  Serial.printf("# Ground Station ID = 0x%02X (%s)\n", STATION_ID,
+                STATION_ID_OVERRIDE ? "manual override" : "auto from chip MAC");
 
   ledBegin();
   s_cfgOk = loraBegin(LORA_RENDEZVOUS_CH);

@@ -1,10 +1,11 @@
 // =============================================================================
 // TelemetryPacket.h  -- SHARED between SondeTransmitter and GroundReceiver
 // -----------------------------------------------------------------------------
-// v2: compact, packed, little-endian telemetry optimized for long range. NO
-// floats on the air. Redundant/derivable fields (power, uptime, date, MS temp,
-// raw ADC) are dropped to shrink airtime; the receiver re-derives power on the
-// ground. Keep this file byte-for-byte identical in both projects.
+// v4: compact, packed, little-endian telemetry optimized for long range. NO
+// floats on the air. Derivable fields (power, wind speed/direction, uptime,
+// date, MS temp, raw ADC) are dropped to shrink airtime; the receiver re-derives
+// power (V*I) and wind (from successive GPS fixes) on the ground. Keep this file
+// byte-for-byte identical in both projects.
 //
 // Wire format (little-endian):  [sync][version] ... fields ... [crc16]
 // CRC-16/CCITT-FALSE over every byte from sync up to (not including) crc16.
@@ -17,7 +18,7 @@
 // ---- Framing / protocol -----------------------------------------------------
 #define TELEM_SYNC0              0xAAu     // 2-byte sync for robust framing
 #define TELEM_SYNC1              0x55u
-#define TELEM_PROTOCOL_VERSION   2u
+#define TELEM_PROTOCOL_VERSION   4u
 
 // ---- status_flags bits ------------------------------------------------------
 #define TF_STAT_GPS_FIX   (1u << 0)   // GPS reports a valid position fix
@@ -57,13 +58,13 @@ typedef struct TELEM_PACKED {
   int32_t  lon_e7;           // longitude, degrees * 1e7
   uint16_t alt_m;            // GPS altitude, meters (0..65535)
   uint8_t  sats;             // satellites in use
-  uint16_t speed_cms;        // ground/wind speed, cm/s
   uint16_t course_cd;        // GPS course over ground, centi-degrees 0..35999
-  uint16_t wind_dir_cd;      // wind direction, centi-degrees 0..35999
+                             // (wind speed + direction are DERIVED on the ground
+                             //  from successive lat/lon -- not sent over the air)
 
   // weather
   int16_t  sht_temp_c100;    // SHT41 temperature, deg C * 100
-  uint8_t  sht_rh_x2;        // SHT41 RH, % * 2 (0..200 = 0..100 %)
+  uint16_t sht_rh_x10;       // SHT41 RH, % * 10 (0..1000 = 0..100 %, 0.1 % res)
   uint16_t press_half_pa;    // pressure, Pascals / 2 (decode: *2)
   int16_t  therm_temp_c100;  // thermistor temperature, deg C * 100
 
@@ -80,7 +81,7 @@ typedef struct TELEM_PACKED {
 } TelemetryPacket;
 #pragma pack(pop)
 
-static_assert(sizeof(TelemetryPacket) == 42, "TelemetryPacket must be 42 bytes");
+static_assert(sizeof(TelemetryPacket) == 39, "TelemetryPacket must be 39 bytes");
 
 // ---- CRC-16/CCITT-FALSE -----------------------------------------------------
 static inline uint16_t telem_crc16(const uint8_t* data, size_t len) {
