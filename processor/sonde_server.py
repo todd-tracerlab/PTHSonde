@@ -756,7 +756,7 @@ def render_images(pts, idx, extras, out_dir):
     return png_path, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 # ---- real SHARPpy GUI render (subprocess into the 3.10 venv) ----------------
-def render_sharppy_real(pts, out_dir, lat, lon):
+def render_sharppy_real(pts, out_dir, lat, lon, launch_t=None):
     """Render the genuine SHARPpy SPC panel via the 3.10 venv. Returns (png, err)."""
     # Find the SHARPpy venv. Search a few sensible spots so a frozen .exe can find
     # it whether venv310 sits next to the exe, one level up, or in the dev tree.
@@ -792,30 +792,47 @@ def render_sharppy_real(pts, out_dir, lat, lon):
     except OSError:
         pass
     if os.path.exists(outpng) and os.path.getsize(outpng) > 2000:
-        _brand_sharppy(outpng)
+        _brand_sharppy(outpng, lat, lon, launch_t)
         return outpng, None
     return None, "render failed: " + ((r.stderr or r.stdout or "")[-300:])
 
-def _brand_sharppy(png_path):
+def _brand_sharppy(png_path, lat=None, lon=None, launch_t=None):
     """Overlay the PTHSonde logo (top-left) and TracerLab (top-right) onto the
-    black SHARPpy panel, covering its default corner text. Uses the light-ink
-    logo variants so they read on the dark background. Silently no-ops on error."""
+    black SHARPpy panel, covering its default corner text, plus a launch caption
+    (time + starting lat/lon) under the PTHSonde logo. Uses the light-ink logo
+    variants so they read on the dark background. Silently no-ops on error."""
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFont
         base = Image.open(png_path).convert("RGBA")
         W, H = base.size
         draw = ImageDraw.Draw(base)
         pth = os.path.join(DASH, "brand_dark.png")     # light-ink PTHSonde logo
         tl = os.path.join(DASH, "tracerlab.png")        # light-text TracerLab
+        # launch caption text
+        cap = ""
+        if launch_t:
+            cap = "Launch " + launch_t + ("Z" if not launch_t.endswith("Z") else "")
+        if lat is not None and lon is not None:
+            cap = (cap + "   " if cap else "") + ("%.4f, %.4f" % (lat, lon))
+        lg_h = 0
         if os.path.exists(pth):
             lg = Image.open(pth).convert("RGBA")
-            h = max(1, int(H * 0.058)); w = int(lg.width * h / lg.height); x, y = 16, 10
-            draw.rectangle([0, 0, max(x + w + 14, int(W * 0.23)), y + h + 12], fill=(0, 0, 0, 255))   # hide SHARPpy title
+            h = max(1, int(H * 0.058)); w = int(lg.width * h / lg.height); x, y = 16, 10; lg_h = y + h
+            capH = 42 if cap else 0
+            draw.rectangle([0, 0, max(x + w + 14, int(W * 0.27)), y + h + 8 + capH], fill=(0, 0, 0, 255))
             base.alpha_composite(lg.resize((w, h), Image.LANCZOS), (x, y))
+        if cap:
+            try:
+                fp = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arialbd.ttf")
+                font = ImageFont.truetype(fp, 28) if os.path.exists(fp) else ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            draw = ImageDraw.Draw(base)
+            draw.text((20, lg_h + 8), cap, fill=(205, 212, 222), font=font)
         if os.path.exists(tl):
             tr = Image.open(tl).convert("RGBA")
             h = max(1, int(H * 0.05)); w = int(tr.width * h / tr.height); x = W - w - 18; y = 12
-            draw.rectangle([x - 14, 0, W, y + h + 12], fill=(0, 0, 0, 255))       # hide SHARPpy version
+            ImageDraw.Draw(base).rectangle([x - 14, 0, W, y + h + 12], fill=(0, 0, 0, 255))
             base.alpha_composite(tr.resize((w, h), Image.LANCZOS), (x, y))
         base.convert("RGB").save(png_path)
     except Exception:
@@ -837,17 +854,37 @@ def process_sounding(csv_path, out_dir):
     except Exception as e:
         sharppy_err = "SHARPpy error: %s" % e
 
-    # representative launch lat/lon for the panel header
-    lat = lon = None
-    for d in rows:
-        la, lo = _num(d, "lat_deg"), _num(d, "lon_deg")
-        if la and lo and (la != 0 or lo != 0):
+    # launch fix: date/time + lat/lon from the first SOLID GPS packet (real fix +
+    # satellites), skipping cold-start glitches. Date comes from the GPS if present,
+    # else from the flight-folder name (both UTC); time is the GPS UTC time.
+    def _folder_date():
+        p = (STATE.get("name") or "").split("_")
+        if len(p) >= 2 and len(p[1]) == 8 and p[1].isdigit():
+            return "%s-%s-%s" % (p[1][:4], p[1][4:6], p[1][6:8])
+        return ""
+    lat = lon = launch_t = None
+    for need_sats in (5, 0):                       # prefer a solid fix, then any fix
+        for d in rows:
+            la, lo = _num(d, "lat_deg"), _num(d, "lon_deg")
+            if not (la and lo and (la != 0 or lo != 0)):
+                continue
+            if _num(d, "gps_fix") != 1:
+                continue
+            sats = _num(d, "sats")
+            if need_sats and (sats is None or sats < need_sats):
+                continue
             lat, lon = la, lo
+            ut = (d.get("utc_time") or "").strip()
+            ud = (d.get("utc_date") or "").strip()
+            date_str = ud if (ud and ud != "0") else _folder_date()
+            launch_t = (((date_str + " ") if date_str else "") + ut) if ut else (date_str or None)
+            break
+        if lat is not None:
             break
 
     # Prefer the GENUINE SHARPpy SPC panel (rendered in the 3.10 venv); fall
     # back to the matplotlib panel if that environment isn't available.
-    realpng, realerr = render_sharppy_real(pts, out_dir, lat, lon)
+    realpng, realerr = render_sharppy_real(pts, out_dir, lat, lon, launch_t)
     if realpng:
         png_path = realpng
         img_b64 = "data:image/png;base64," + base64.b64encode(open(realpng, "rb").read()).decode()
