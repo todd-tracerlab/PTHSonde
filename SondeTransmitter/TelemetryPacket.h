@@ -24,6 +24,7 @@
 #define TF_STAT_GPS_FIX   (1u << 0)   // GPS reports a valid position fix
 #define TF_STAT_GPS_PPS   (1u << 1)   // 1PPS pulse seen recently
 #define TF_STAT_LOCKED    (1u << 2)   // sonde frequency-locked (launched)
+#define TF_STAT_BALLOON   (1u << 3)   // GPS balloon (80 km) mode confirmed recently
 
 // ---- valid_flags bits (1 = sensor read OK) ----------------------------------
 #define TF_VALID_SHT      (1u << 0)   // SHT41 temperature/RH

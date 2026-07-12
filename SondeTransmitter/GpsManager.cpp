@@ -31,8 +31,8 @@ static void IRAM_ATTR ppsIsr() {
 // to a slow keep-alive that re-asserts it so an in-flight reset can't strand us
 // back in the 10 km-capped Normal mode.
 #define GPS_FR_MODE_BALLOON 3
-static const uint32_t GPS_MODE_RETRY_MS     = 3000;    // before first ACK: hammer it
-static const uint32_t GPS_MODE_KEEPALIVE_MS = 15000;   // after ACK: survive resets
+static const uint32_t GPS_MODE_ASSERT_MS = 4000;   // steady re-assert cadence, WHOLE flight
+static const uint32_t GPS_ACK_FRESH_MS   = 20000;  // an ACK is "current" only this long
 static uint32_t s_lastModeMs = 0;
 
 // Send an NMEA/PMTK sentence, computing the "$<body>*HH\r\n" checksum.
@@ -57,16 +57,27 @@ static void gpsSetBalloonMode() {
 // which means balloon mode never took -- yet we never checked this reply, so we
 // were flying blind. Watch the NMEA stream for the ACK and expose the flag so it
 // can be confirmed on the bench (see the "FR-mode ACK" line in the serial debug).
-static int8_t s_frAck = -1;           // -1 = no ACK seen yet
-static char   s_nmea[96];
-static uint8_t s_nmeaLen = 0;
+static int8_t   s_frAck   = -1;       // -1 = no ACK seen yet; else last flag seen
+static uint32_t s_frAckMs = 0;        // millis() when flag 3 was last confirmed
+static bool     s_gpsReset = false;   // module restart just detected -> re-assert now
+static char     s_nmea[96];
+static uint8_t  s_nmeaLen = 0;
 
 static void gpsScanForAck(char c) {
   if (c == '\n' || c == '\r') {
-    if (s_nmeaLen >= 16) {
+    if (s_nmeaLen >= 8) {
       s_nmea[s_nmeaLen] = '\0';
       char* p = strstr(s_nmea, "PMTK001,886,");
-      if (p) s_frAck = (int8_t)(p[12] - '0');   // char right after the 2nd comma
+      if (p) {
+        s_frAck = (int8_t)(p[12] - '0');          // char right after the 2nd comma
+        if (s_frAck == GPS_FR_MODE_BALLOON) s_frAckMs = millis();
+      }
+      // L86 restart banner (PMTK010/PMTK011): the VOLATILE balloon mode is gone,
+      // so mark unconfirmed and force an immediate re-assert on the next update.
+      if (strstr(s_nmea, "PMTK010") || strstr(s_nmea, "PMTK011")) {
+        s_frAck = -1;
+        s_gpsReset = true;
+      }
     }
     s_nmeaLen = 0;
   } else if (s_nmeaLen < sizeof(s_nmea) - 1) {
@@ -75,6 +86,15 @@ static void gpsScanForAck(char c) {
 }
 
 int8_t gpsFrModeAck() { return s_frAck; }
+
+bool gpsBalloonConfirmed() {
+  return s_frAck == GPS_FR_MODE_BALLOON && (millis() - s_frAckMs) < GPS_ACK_FRESH_MS;
+}
+
+void gpsAssertBalloonNow() {
+  gpsSetBalloonMode();
+  s_lastModeMs = millis();
+}
 
 void gpsBegin() {
   s_gpsSerial.begin(GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
@@ -89,13 +109,14 @@ void gpsBegin() {
 }
 
 void gpsUpdate() {
-  // Assert balloon mode: hammer it every few seconds until the module ACKs
-  // (flag 3), then fall back to a slow keep-alive that re-asserts it so a reset
-  // or brown-out at altitude can't drop us back to the 10 km-capped Normal mode.
+  // Re-assert balloon mode at a steady cadence for the WHOLE flight (never relax
+  // to a slow keep-alive), and immediately if a module restart was just detected.
+  // PMTK886 is volatile (lost on any reset/brown-out), so continuous re-assertion
+  // is what actually keeps the 80 km ceiling instead of silently falling back to
+  // the 10 km-capped Normal mode.
   uint32_t now = millis();
-  uint32_t interval = (s_frAck == GPS_FR_MODE_BALLOON) ? GPS_MODE_KEEPALIVE_MS
-                                                       : GPS_MODE_RETRY_MS;
-  if (now - s_lastModeMs >= interval) {
+  if (s_gpsReset || (now - s_lastModeMs >= GPS_MODE_ASSERT_MS)) {
+    s_gpsReset = false;
     s_lastModeMs = now;
     gpsSetBalloonMode();
   }

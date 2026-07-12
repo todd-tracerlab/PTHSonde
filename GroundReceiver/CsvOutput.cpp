@@ -72,9 +72,21 @@ void csvPrintRow(const TelemetryPacket* p,
     w_lastLat = lat; w_lastLon = lon; w_lastMs = rx_ms; w_have = true;
   }
 
+  // With no fix the L86 holds its LAST position, so lat/lon/alt would freeze (e.g.
+  // stuck at 11132 m through an altitude-cap dropout). Emit NaN instead so the log
+  // doesn't look like the sonde is really parked there.
+  char latS[16], lonS[16], altS[12];
+  if (p->status_flags & TF_STAT_GPS_FIX) {
+    snprintf(latS, sizeof(latS), "%.7f", p->lat_e7 / 1e7);
+    snprintf(lonS, sizeof(lonS), "%.7f", p->lon_e7 / 1e7);
+    snprintf(altS, sizeof(altS), "%u", p->alt_m);
+  } else {
+    strcpy(latS, "NaN"); strcpy(lonS, "NaN"); strcpy(altS, "NaN");
+  }
+
   int n = snprintf(buf, sizeof(buf),
     "%lu,0x%02X,%u,%lu,%lu,%u,NA,"                       // rx_ms..uptime_s(NA)
-    "%u,%u,%u,,%s,%.7f,%.7f,%u,%.2f,%.2f,"               // gps..course (utc_date empty)
+    "%u,%u,%u,,%s,%s,%s,%s,%.2f,%.2f,"                   // gps..course (utc_date empty)
     "%.2f,%.1f,%ld,NA,NA,%.2f,%.2f,"                     // sht..wind (ms_temp/mcp NA)
     "%.3f,%d,%.1f,0x%02X,0x%02X,"                        // batt..flags
     "%u,%u,%u,%u,%u,%u,%u,"                              // v_*
@@ -89,8 +101,7 @@ void csvPrintRow(const TelemetryPacket* p,
     (p->status_flags & TF_STAT_GPS_PPS) ? 1 : 0,
     p->sats,
     timeStr,
-    p->lat_e7 / 1e7, p->lon_e7 / 1e7,
-    p->alt_m,
+    latS, lonS, altS,
     speed_mps,
     p->course_cd / 100.0,
     p->sht_temp_c100 / 100.0,

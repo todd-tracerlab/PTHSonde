@@ -139,6 +139,7 @@ static void buildPacket(TelemetryPacket* p) {
 
   uint8_t status = 0, valid = 0;
   if (s_locked) status |= TF_STAT_LOCKED;
+  if (gpsBalloonConfirmed()) status |= TF_STAT_BALLOON;   // 80 km ceiling actually active?
 
   // ---- GPS (instantaneous position) ----------------------------------------
   GpsData g = gpsGet();
@@ -333,6 +334,7 @@ void loop() {
     TelemetryPacket pkt;
     buildPacket(&pkt);
     loraSendPacket(&pkt);
+    gpsAssertBalloonNow();          // re-assert balloon mode right after the TX current spike
     if (PRINT_DIAG) printDiag(&pkt);
 
     resetAverages();

@@ -27,5 +27,14 @@ GpsData gpsGet();
 
 // Balloon/high-altitude (PMTK886,3) mode ACK flag from the L86:
 //   -1 no reply yet   0 invalid   1 unsupported   2 failed   3 OK (balloon set).
-// Anything other than 3 means the GPS will stop fixing at its default ~12 km ceiling.
+// Anything other than 3 means the GPS will stop fixing at its default 10 km ceiling.
 int8_t  gpsFrModeAck();
+
+// True only if the L86 confirmed balloon mode RECENTLY (guards against a stale,
+// latched ACK after a mid-flight module reset that silently reverted to Normal).
+bool    gpsBalloonConfirmed();
+
+// Force an immediate balloon-mode re-assert. Call right after each LoRa transmit:
+// the E22 TX current spike is the most likely trigger for a GPS brown-out/reset,
+// and PMTK886 is volatile (lost on reset), so we re-send it on that exact cadence.
+void    gpsAssertBalloonNow();

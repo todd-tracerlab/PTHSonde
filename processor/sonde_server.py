@@ -305,9 +305,12 @@ def _num(d, k):
     if v is None or v == "" or v == "NA":
         return None
     try:
-        return float(v)
+        f = float(v)
     except ValueError:
         return None
+    if f != f or f in (float("inf"), float("-inf")):   # NaN / Inf -> treat as missing
+        return None
+    return f
 
 # Centered moving-average window for RH / SHT-temp smoothing. The SHT41 transmits
 # RH in 0.5% steps, which makes the humidity and (derived) dewpoint traces stair-
