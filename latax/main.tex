@@ -72,6 +72,11 @@
 % ------------------------------- TITLE PAGE ---------------------------------
 \begin{titlepage}
 \thispagestyle{empty}
+% severe-weather backdrop (NOAA cumulonimbus, public domain)
+\begin{tikzpicture}[remember picture,overlay]
+  \node[inner sep=0] at (current page.center)
+    {\includegraphics[width=\paperwidth,height=\paperheight]{title_bg.png}};
+\end{tikzpicture}%
 \centering
 \vspace*{0.5cm}
 
