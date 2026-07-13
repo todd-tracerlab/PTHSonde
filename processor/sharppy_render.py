@@ -71,6 +71,25 @@ def main():
     cfg = Config(ini)
     PrefDialog.initConfig(cfg)                   # default colors/units/insets
 
+    # Zero out UNREALIZABLE CAPE so the panel matches physics (and the text
+    # analysis). Under a strong cap SHARPpy sums positive buoyancy slivers with NO
+    # LFC -- CAPE that can never be reached. If a parcel has no LFC AND is stable
+    # (Lifted Index >= 0), force its CAPE to 0. A negative LI is real instability,
+    # so it is left untouched. This patches the function the panel uses to compute
+    # every parcel, so the Skew-T fill, the PCL table, and the indices all agree.
+    import sharppy.sharptab.params as _params
+    _orig_parcelx = _params.parcelx
+    def _guarded_parcelx(*a, **k):
+        pcl = _orig_parcelx(*a, **k)
+        try:
+            lfc = float(pcl.lfchght); li = float(pcl.li5)
+            if lfc != lfc and li == li and li >= 0.0:     # no LFC + stable -> phantom
+                pcl.bplus = 0.0
+        except Exception:
+            pass
+        return pcl
+    _params.parcelx = _guarded_parcelx
+
     prof_coll = SPCDecoder(spc).getProfiles()
     prof_coll.setMeta('run', prof_coll.getMeta('base_time'))
     prof_coll.setMeta('model', 'Observed')

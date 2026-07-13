@@ -343,46 +343,80 @@ def _median(xs):
     m = n // 2
     return xs[m] if (n % 2) else 0.5 * (xs[m - 1] + xs[m])
 
-def robust_surface(rows):
-    """Derive a stable surface level (P, T, Td) from the near-launch samples.
+def _robust_med(vals, k=3.5):
+    """Median after MAD-based outlier rejection (drops points > k*MAD from the
+    median). Median alone is robust to spikes; this also throws out a *cluster* of
+    bad readings (e.g. a thermistor swinging on the pad) before re-medianing."""
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    med = _median(vals)
+    mad = _median([abs(v - med) for v in vals])
+    if mad and mad > 1e-6:
+        kept = [v for v in vals if abs(v - med) <= k * mad]
+        if kept:
+            return _median(kept)
+    return med
 
-    The SHARPpy parcel (SBCAPE/CIN/LCL ...) is very sensitive to surface T/Td, so
-    a single noisy launch packet must not define it. We take every valid sample in
-    the lowest-altitude band (highest pressure, within SURF_BAND_HPA of the max)
-    and use the MEDIAN of each field -- robust to GPS/sensor spikes in a way a
-    plain mean is not. Returns a level dict or None.
+
+def robust_surface(rows):
+    """Surface = the first genuinely-ASCENDING sample, 5-point averaged.
+
+    All the garbage lives in the pre-launch pad period (sensor soak / equilibration
+    / sun-shade handling / the sonde being carried around), and a stray landing can
+    also sit at high pressure. So instead of medianing a noisy near-ground band, we
+    find the moment the balloon is actually CLIMBING -- barometric ascent rate over
+    2 m/s -- and average the first 5 samples from there. Those are clean, ventilated
+    free-air readings that define the true launch surface.
     """
-    SURF_BAND_HPA  = 5.0     # ~40 m of altitude near the surface (primary window)
-    SURF_WIDEN_HPA = 10.0    # widen to this (~80 m) if the primary band is sparse
-    SURF_MIN_N     = 5       # ...but only widen the *pressure* window, never by count,
-                             # so a fast ascent can't blow the surface up to altitude
-    samp = []
+    ASCENT_MS = 2.0      # "actually climbing" threshold
+    NPTS      = 5
+
+    rec = []
     for d in rows:
         p_pa = _num(d, "ms_press_pa")
         if p_pa is None or _num(d, "v_ms") != 1:
             continue
-        t = _num(d, "therm_temp_c") if _num(d, "v_therm") == 1 else None
-        if t is None:
-            t = _num(d, "sht_temp_c")
-        samp.append({"p": p_pa / 100.0, "t": t,
-                     "sht": _num(d, "sht_temp_c"), "rh": _num(d, "sht_rh_pct"),
-                     "h": _num(d, "alt_m")})
-    if not samp:
+        p = p_pa / 100.0
+        rec.append({"p": p, "z": _baro_alt(p),
+                    "therm": _num(d, "therm_temp_c") if _num(d, "v_therm") == 1 else None,
+                    "sht": _num(d, "sht_temp_c"), "rh": _num(d, "sht_rh_pct"),
+                    "ms": _num(d, "rx_ms")})
+    if len(rec) < NPTS + 2:
         return None
-    pmax = max(s["p"] for s in samp)
-    band = [s for s in samp if s["p"] >= pmax - SURF_BAND_HPA]
-    if len(band) < SURF_MIN_N:                       # sparse -> widen the window, capped span
-        band = [s for s in samp if s["p"] >= pmax - SURF_WIDEN_HPA]
-    P  = _median([s["p"]   for s in band])
-    T  = _median([s["t"]   for s in band])
-    sht = _median([s["sht"] for s in band])
-    rh = _median([s["rh"]  for s in band])
-    h  = _median([s["h"]   for s in band])
-    td = _dewpoint(sht, rh) if (sht is not None and rh) else None
+    # ascent only -- cut at apogee (minimum pressure) so a descent can't be picked
+    apogee = min(range(len(rec)), key=lambda i: rec[i]["p"])
+    rec = rec[:apogee + 1]
+    if len(rec) < NPTS:
+        return None
+
+    def tsec(i):
+        v = rec[i]["ms"]
+        return v / 1000.0 if v is not None else i * 3.0     # fallback: ~3 s cadence
+
+    # first sample where the barometric ascent rate crosses 2 m/s (windowed so one
+    # noisy pressure reading can't trigger it). If it never clearly climbs (data
+    # started mid-flight), fall back to the very start.
+    W, launch = 2, 0
+    for i in range(W, len(rec) - W):
+        dt = tsec(i + W) - tsec(i - W)
+        if dt > 0 and (rec[i + W]["z"] - rec[i - W]["z"]) / dt > ASCENT_MS:
+            launch = i
+            break
+
+    seg = rec[launch:launch + NPTS]
+
+    def avg(k):
+        vals = [r[k] for r in seg if r[k] is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    t_th, t_sht, rh, P = avg("therm"), avg("sht"), avg("rh"), avg("p")
+    T = t_th if t_th is not None else t_sht
+    td = _dewpoint(t_sht, rh) if (t_sht is not None and rh) else None
     if P is None or T is None or td is None:
         return None
-    return {"p": P, "t": T, "td": td,
-            "h": (h if h is not None else 0.0), "wd": None, "ws": None, "n": len(band)}
+    return {"p": P, "t": T, "td": td, "h": _baro_alt(P),
+            "wd": None, "ws": None, "n": len(seg)}
 
 def _average_winds(pts):
     """Replace each level's wind with the 500 m altitude-binned + 5-pt-smoothed
@@ -511,7 +545,8 @@ def _trim_soak(rows, fit_lo=800.0, fit_hi=3500.0, tol=1.5,
 
 def build_profile_arrays(rows):
     """Extract a clean, monotonic (decreasing pressure) sounding."""
-    rows = _trim_soak(rows)               # skip pad rows AND the thermal-soak nose
+    orig = rows                           # keep raw launch data for the surface parcel
+    rows = _trim_soak(rows)               # skip pad rows AND the thermal-soak nose (profile only)
     pts = []
     for d in rows:
         p_pa = _num(d, "ms_press_pa")
@@ -551,7 +586,7 @@ def build_profile_arrays(rows):
     # Robustify the surface parcel: keep the true surface pressure/height (the
     # highest-pressure level), but replace its T and Td with the MEDIAN of the
     # near-launch samples so a single noisy launch packet can't skew SBCAPE/LCL.
-    surf = robust_surface(rows)
+    surf = robust_surface(orig)           # from RAW launch data, not the soak-trimmed profile
     if surf and cleaned:
         cleaned[0]["t"]  = surf["t"]
         cleaned[0]["td"] = surf["td"]
@@ -590,10 +625,21 @@ def sharppy_indices(pts):
         except Exception:
             return None
 
+    def cape(parcel):
+        """CAPE is only realizable if the parcel reaches an LFC. Under a strong cap
+        SHARPpy reports CAPE with NO LFC (physically impossible). Treat that as
+        phantom ONLY when the parcel is also non-buoyant (Lifted Index >= 0) -- a
+        negative LI is genuine instability, so keep its CAPE even if SHARPpy could
+        not pin a clean LFC on a noisy balloon profile."""
+        li = f(parcel.li5, 1)
+        if f(parcel.lfchght) is None and li is not None and li >= 0:
+            return 0
+        return f(parcel.bplus)
+
     idx = {
-        "SBCAPE (J/kg)": f(sfc.bplus), "SBCIN (J/kg)": f(sfc.bminus),
-        "MLCAPE (J/kg)": f(ml.bplus), "MLCIN (J/kg)": f(ml.bminus),
-        "MUCAPE (J/kg)": f(mu.bplus), "MUCIN (J/kg)": f(mu.bminus),
+        "SBCAPE (J/kg)": cape(sfc), "SBCIN (J/kg)": f(sfc.bminus),
+        "MLCAPE (J/kg)": cape(ml), "MLCIN (J/kg)": f(ml.bminus),
+        "MUCAPE (J/kg)": cape(mu), "MUCIN (J/kg)": f(mu.bminus),
         "LCL (m)": f(sfc.lclhght), "LFC (m)": f(sfc.lfchght), "EL (m)": f(sfc.elhght),
         "Lifted Index (C)": f(sfc.li5, 1),
         "K-Index": f(params.k_index(prof), 1),
