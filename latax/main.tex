@@ -173,7 +173,7 @@ receiver, and the dashboard.
   arr/.style={-{Stealth[length=3mm]},line width=1pt,color=tldark}]
 
   \node[acc] (sonde) {\textbf{Sonde}\\[1pt]\footnotesize P/T/H, GPS,\\\footnotesize battery};
-  \node[box,right=of sonde] (rx) {\textbf{Ground}\\\textbf{Receiver}\\[1pt]\footnotesize ESP32 + E22};
+  \node[box,right=of sonde] (rx) {\textbf{Ground}\\\textbf{Receiver}\\[1pt]\footnotesize LoRa radio};
   \node[acc,right=of rx] (dash) {\textbf{Dashboard}\\[1pt]\footnotesize laptop app};
 
   \draw[arr] (sonde) -- node[lbl,above,align=center]{915\,MHz\\LoRa} (rx);
@@ -191,24 +191,23 @@ ground receiver, which forwards it over USB to the desktop dashboard.}
 \begin{itemize}
   \item \textbf{Long-range LoRa} --- Ebyte E22 at 22\,dBm / 0.3\,kbps air rate for maximum link margin.
   \item \textbf{Barometric flight data} --- altitude, ascent rate and the sounding are derived
-        from the pressure sensor, so they remain valid above the GPS ceiling.
+        directly from the pressure sensor.
   \item \textbf{SHARPpy analysis} --- an SPC-style Skew-T and index panel rendered from each flight.
-  \item \textbf{Reusable payload} --- a 3D-printed enclosure with a swappable battery; recover it and fly again.
+  \item \textbf{Reusable payload} --- a rugged enclosure with a swappable battery; recover it and fly again.
   \item \textbf{Per-unit identity} --- each sonde derives a stable hex ID from its chip, printed on its sticker.
 \end{itemize}
 
 \begin{note}
 This guide covers the full operational workflow: preparing the sonde, pairing it
 with the ground station, filling the balloon, launching, and analysing the flight.
-It assumes the firmware is already flashed and the desktop app installed.
 \end{note}
 
 % =============================================================================
 \chapter{The Sonde}
 
-The \PTH{} payload (shown on the cover) is a single ESP32-C3 board carrying the
-sensor suite and the radio, housed in a lightweight, reusable 3D-printed shell with
-a removable battery door and an exposed thermistor probe for true air temperature.
+The \PTH{} payload (shown on the cover) is a compact, reusable radiosonde carrying the
+full sensor suite and the radio, with a removable battery door and an exposed thermistor
+probe for true air temperature.
 
 \section{Measurement specifications}
 The \PTH{} measures the full \textbf{P}ressure / \textbf{T}emperature /
@@ -229,8 +228,8 @@ Air temperature & $-70$ to $+50\,^\circ$C & $\pm0.3\,^\circ$C & $0.01\,^\circ$C 
 Relative humidity & $0$--$100\,\%$RH & $\pm1.8\,\%$RH & $0.1\,\%$RH & $\sim4$\,s \\
 Barometric pressure & $10$--$1200$\,hPa & $\pm1.5$\,hPa & $0.01$\,hPa & $<20$\,ms \\
 \rowcolor{tllight}
-Pressure altitude (derived) & $0$--$12$\,km & $\pm10$\,m & $1$\,m & $<1$\,s \\
-Wind speed & $0$--$90$\,m/s & $\pm0.5$\,m/s & $0.1$\,m/s & $3$\,s (downlink) \\
+Pressure altitude (derived) & $0$--$31$\,km & $\pm10$\,m & $1$\,m & $<1$\,s \\
+Wind speed (GPS-derived) & $0$--$100$\,m/s & $\pm0.5$\,m/s & $0.1$\,m/s & $3$\,s (downlink) \\
 \rowcolor{tllight}
 Wind direction & $0$--$360^\circ$ & $\pm5^\circ$ & $1^\circ$ & $3$\,s (downlink) \\
 GPS position & global & $\pm2.5$\,m CEP & --- & $3$\,s (downlink) \\
@@ -284,9 +283,8 @@ The mounting bracket is on the right; the zip tie (left) will secure the outer d
 \end{figure}
 
 \begin{tip}
-On power-up the status LED blinks while the radio and GPS initialise. If you have
-the sonde on USB, it prints its \textbf{Sonde ID} and a per-sensor health line ---
-confirm every sensor reads \texttt{ok} before you close it up.
+On power-up the status LED blinks while the radio and GPS initialise. On the dashboard,
+confirm the \textbf{Sonde ID} appears and every sensor dot reads green before you close it up.
 \end{tip}
 
 \section{Step 2 --- Close and zip-tie the door}
@@ -325,9 +323,9 @@ receiver, records the flight, and draws everything live --- telemetry, a Skew-T,
 a hodograph, time-series, a landing-prediction map, and the SHARPpy panel.
 
 \section{The ground receiver and antenna}
-The receiver is a small 3D-printed box housing an ESP32 with the same E22 LoRa radio
-as the sonde, an SMA antenna connector, and a USB lead to your laptop. Like the
-sonde, each receiver carries its own hex ID on a printed sticker.
+The receiver is a small box with the same LoRa radio as the sonde, an SMA antenna
+connector, and a USB lead to your laptop. Like the sonde, each receiver carries its
+own hex ID on a printed sticker.
 
 \begin{figure}[htbp]
 \centering
@@ -813,6 +811,19 @@ Helium net lift & $\approx$1.05\,g/L \\
 \end{tabular}
 \caption{At-a-glance operating figures for the \PTH{} system.}
 \end{table}
+
+\clearpage
+\subsection{Field quick-start card}
+The card below condenses the whole workflow --- payload, fill figures for the two
+standard balloons, the launch sequence and troubleshooting --- onto one page.
+\textbf{Print it at 100\% scale} (it is sized $3.62\times6.6$\,in) and cut it out to
+carry in the field.
+
+\begin{figure}[H]
+\centering
+\includegraphics[height=0.82\textheight]{quickstart_card.png}
+\caption{Print-and-cut \PTH{} field quick-start card ($3.62\times6.6$\,in).}
+\end{figure}
 
 \clearpage
 \section{Inventory \& stock tracker}
