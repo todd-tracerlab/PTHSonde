@@ -793,6 +793,15 @@ const DEFAULT_COLS=["rx_ms","sonde_id","seq","seq_gap","pkt_count","proto","upti
   "v_sht","v_ms","v_mcp","v_ina","v_therm","v_wind","v_gps",
   "rssi_dbm","noise_dbm","snr_db","sonde_ch","locked","crc_ok"];
 let colMap={}; DEFAULT_COLS.forEach((n,i)=>colMap[n]=i);
+// Only accept a CSV header if it is COMPLETE. A header split across two serial
+// reads can arrive truncated (still starts with "rx_ms"); accepting it would map
+// the trailing columns -- every v_* sensor flag + sonde_ch -- to nothing, showing
+// all sensors red with no pairing popup. Require the full width AND the trailing
+// columns before trusting it; otherwise keep the known-good map.
+function isValidHeader(cols){
+  const need=["rx_ms","sonde_id","sonde_ch","v_ms","v_gps","crc_ok"];
+  return cols.length>=DEFAULT_COLS.length && need.every(n=>cols.indexOf(n)>=0);
+}
 
 // ---- State -----------------------------------------------------------------
 const data=[], rawLines=[];
@@ -908,8 +917,11 @@ function handleLine(line){
     return;
   }
   if(line.startsWith("rx_ms")){
-    headerLine=line; const p=line.split(","); colMap={}; p.forEach((n,i)=>colMap[n.trim()]=i);
-    log("CSV header received ("+p.length+" cols)."); return;
+    const p=line.split(",").map(s=>s.trim());
+    if(isValidHeader(p)){ headerLine=line; colMap={}; p.forEach((n,i)=>colMap[n]=i);
+      log("CSV header received ("+p.length+" cols)."); }
+    else log("Ignored a partial/short CSV header ("+p.length+" cols) — kept the current column map.",true);
+    return;
   }
   const cells=line.split(","); if(cells.length<10) return;
   rawLines.push(line);
@@ -1904,7 +1916,8 @@ function importFlightCsv(text,name){
   for(const ln of text.split(/\r?\n/)){
     const s=ln.trim(); if(!s) continue;
     if(s[0]==="#") continue;                         // analysis header block
-    if(s.startsWith("rx_ms")){ headerLine=s; const p=s.split(","); colMap={}; p.forEach((n,i)=>colMap[n.trim()]=i); continue; }
+    if(s.startsWith("rx_ms")){ const p=s.split(",").map(x=>x.trim());
+      if(isValidHeader(p)){ headerLine=s; colMap={}; p.forEach((n,i)=>colMap[n]=i); } continue; }
     const cells=s.split(","); if(cells.length<10) continue;
     rawLines.push(s); const r=parseRecord(cells); if(r){ ingest(r); rows++; }
   }
