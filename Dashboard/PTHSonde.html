@@ -924,8 +924,12 @@ function handleLine(line){
     return;
   }
   const cells=line.split(","); if(cells.length<10) return;
+  const r=parseRecord(cells); if(!r) return;
+  // Once paired to a sonde, ignore every OTHER sonde on the air (e.g. a bench
+  // unit powered up nearby) -- don't ingest, plot, record, or re-pair to it.
+  if(pairedId!=null && r.sondeId!=null && r.sondeId!==pairedId) return;
   rawLines.push(line);
-  const r=parseRecord(cells); if(r) ingest(r);
+  ingest(r);
   saveLine(line);
 }
 function cell(c,n){ const i=colMap[n]; return (i==null||i>=c.length)?null:c[i]; }
@@ -2007,6 +2011,8 @@ function stopFlight(){
   if(!flightActive){ return; }
   flightActive=false; flightArmed=false; flightDone=true;
   setRecDot(); updateFlightUi(); setAnalysisEnabled(true);
+  // Unpair the sonde that just flew so the dashboard is free to pair the next one.
+  if(pairedId!=null){ log("Unpaired "+pairedId+" (flight ended)."); pairedId=null; updatePairedBadge(); }
   $("flightStatus").innerHTML='Flight <b>'+(flightName||'')+'</b> stopped — recording ended. Click <b>Process Flight</b> to render + append the sounding.';
   log("Flight stopped — recording ended. Analysis unlocked.");
   showTab("analysis");
