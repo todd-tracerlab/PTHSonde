@@ -134,7 +134,13 @@ GpsData gpsGet() {
   GpsData g;
   memset(&g, 0, sizeof(g));
 
-  g.fix  = s_gps.location.isValid() && (s_gps.satellites.value() > 0);
+  // TinyGPSPlus latches location.isValid() true forever after the first fix, so
+  // it holds the LAST position through a dropout. Gate on position AGE instead,
+  // so a lost/stale fix reports fix=false (the receiver then emits NaN) rather
+  // than freezing the last lat/lon as a live position.
+  const uint32_t POS_MAX_AGE_MS = 3000;
+  bool locFresh = s_gps.location.isValid() && (s_gps.location.age() < POS_MAX_AGE_MS);
+  g.fix  = locFresh && (s_gps.satellites.value() > 0);
   g.sats = (uint8_t)(s_gps.satellites.isValid() ? s_gps.satellites.value() : 0);
 
   if (s_gps.date.isValid()) {
@@ -148,13 +154,13 @@ GpsData gpsGet() {
     g.second = s_gps.time.second();
   }
 
-  if (s_gps.location.isValid()) {
+  if (locFresh) {
     g.lat_deg = s_gps.location.lat();
     g.lon_deg = s_gps.location.lng();
   }
-  if (s_gps.altitude.isValid())  g.alt_m      = s_gps.altitude.meters();
-  if (s_gps.speed.isValid())     g.speed_mps  = s_gps.speed.mps();
-  if (s_gps.course.isValid())    g.course_deg = s_gps.course.deg();
+  if (s_gps.altitude.isValid() && s_gps.altitude.age() < POS_MAX_AGE_MS) g.alt_m      = s_gps.altitude.meters();
+  if (s_gps.speed.isValid()    && s_gps.speed.age()    < POS_MAX_AGE_MS) g.speed_mps  = s_gps.speed.mps();
+  if (s_gps.course.isValid()   && s_gps.course.age()   < POS_MAX_AGE_MS) g.course_deg = s_gps.course.deg();
 
   // PPS considered active if a pulse arrived within the last 1.5 s.
   uint32_t last = s_ppsLastMs;

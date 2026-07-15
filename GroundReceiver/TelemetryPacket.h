@@ -45,7 +45,7 @@
 typedef struct TELEM_PACKED {
   uint8_t  sync0;            // 0xAA
   uint8_t  sync1;            // 0x55
-  uint8_t  version;          // protocol version (2)
+  uint8_t  version;          // protocol version (4)
   uint8_t  sonde_id;         // sonde identifier (0..255)
   uint16_t seq;              // packet sequence (wraps; ~54 h at 3 s)
 

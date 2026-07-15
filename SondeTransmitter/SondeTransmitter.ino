@@ -3,7 +3,7 @@
 //
 // Board: "ESP32C3 Dev Module"  (Tools -> USB CDC On Boot: Enabled)
 //
-// Samples sensors at 1 Hz, block-averages them, and transmits a compact 41-byte
+// Samples sensors at 1 Hz, block-averages them, and transmits a compact 39-byte
 // TelemetryPacket every 3 s over the E22-900T22S (0.3 kbps long-range config).
 //
 // Pre-flight: the sonde boots on the rendezvous channel and listens for ground
@@ -58,12 +58,13 @@ struct Avg {
   double mean() const { return n ? sum / (double)n : 0.0; }
 };
 static Avg aShtT, aShtRH, aTherm, aBattV, aCurr;
-static bool s_mcpOk = false;   // MCP3221 read OK at least once this TX window
+static bool s_mcpOk  = false;   // MCP3221 read OK at least once this TX window
+static bool s_pFresh = false;   // MS5611 produced a fresh reading this TX window
 
 static void resetAverages() {
   aShtT.reset(); aShtRH.reset();
   aTherm.reset(); aBattV.reset(); aCurr.reset();
-  s_mcpOk = false;
+  s_mcpOk = false; s_pFresh = false;
 }
 
 // ---- Pressure spike filter --------------------------------------------------
@@ -98,7 +99,7 @@ static void sampleSensors() {
   SensorData s;
   sensorsUpdate(&s);
   if (s.sht_ok)   { aShtT.add(s.sht_temp_c); aShtRH.add(s.sht_rh); }
-  if (s.ms_ok)    { pressAdd(s.ms_press_pa); }   // spike-filtered (median), not averaged
+  if (s.ms_ok)    { pressAdd(s.ms_press_pa); s_pFresh = true; }   // spike-filtered (median), not averaged
   if (s.mcp_ok)   { s_mcpOk = true; }
   if (s.therm_ok) { aTherm.add(s.therm_temp_c); }
 
@@ -163,8 +164,8 @@ static void buildPacket(TelemetryPacket* p) {
                      p->sht_rh_x10    = toU16cap(lround(aShtRH.mean() * 10.0));
                      valid |= TF_VALID_SHT; }
   float medP;
-  if (pressMedian(&medP)) { p->press_half_pa = toU16cap(lround(medP / 2.0));
-                            valid |= TF_VALID_MS; }
+  if (s_pFresh && pressMedian(&medP)) { p->press_half_pa = toU16cap(lround(medP / 2.0));
+                                        valid |= TF_VALID_MS; }
   if (s_mcpOk)     { valid |= TF_VALID_MCP; }
   if (aTherm.ok()) { p->therm_temp_c100 = toC100(aTherm.mean()); valid |= TF_VALID_THERM; }
 
@@ -318,6 +319,16 @@ void loop() {
   }
 
   unsigned long now = millis();
+
+  // ---- LoRa self-heal ------------------------------------------------------
+  // If the E22 never ACKed its config at boot, keep re-attempting (throttled)
+  // so a cold-boot provisioning miss recovers on its own instead of the sonde
+  // transmitting on an unconfigured radio until a power cycle.
+  static unsigned long s_loraRetry = 0;
+  if (!s_loraOk && now - s_loraRetry >= 4000) {
+    s_loraRetry = now;
+    s_loraOk = loraBegin(s_stagedChannel);
+  }
 
   // ---- Sensor sampling tick ------------------------------------------------
   if (now - s_lastSample >= SENSOR_SAMPLE_MS) {
