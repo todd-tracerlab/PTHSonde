@@ -819,6 +819,7 @@ const CH_MIN=52,CH_MAX=77;
 // No start button. Saving begins on the first packet and stops only when the
 // user Processes the flight (which prompts to end it). Clear arms a new flight.
 let importing=false;                 // suppress saving while replaying an imported file
+let viewingImport=false;             // reviewing a replayed CSV (block live pairing until Clear)
 let flightDone=false;                // flight processed/ended; saving paused until Clear
 let flightStarting=false;            // guard: create the disk folder only once
 let flightArmed=false;               // user paired & chose to record -> gates auto-save
@@ -1206,7 +1207,9 @@ function updateSidebar(){
 // ---- Sonde pairing ---------------------------------------------------------
 function maybeShowPair(r){
   if(!r || r.sondeId==null || r.sondeCh==null) return;
-  if(flightArmed || flightActive || importing || flightDone) return;   // recording, or viewing an imported/finished flight
+  if(flightArmed || flightActive || importing || viewingImport) return;   // busy recording, or reviewing a replayed import
+  // NOTE: a finished LIVE flight (flightDone) deliberately still prompts, so the
+  // next powered-on sonde can be paired without hitting Clear first.
   if(pairOpen || pairedId===r.sondeId || pairDismissed.has(r.sondeId)) return;
   pmDetId = r.sondeId; pmDetCh = r.sondeCh;
   $("pmId").textContent = r.sondeId;
@@ -1862,6 +1865,10 @@ $("chSel").onchange=updateRadio;
 (function(){ const s=$("pmFreq"); for(let ch=CH_MIN;ch<=CH_MAX;ch++){ const o=document.createElement("option");
   o.value=ch; o.textContent="ch "+ch+" · "+freqOf(ch)+" MHz"; s.appendChild(o);} })();
 $("pmPair").onclick=async ()=>{
+  // If a previous flight is still on-screen (ended but not yet Cleared), wipe its
+  // plots/buffer first so this sonde's flight starts clean and the two never mix.
+  // (The prior flight's raw CSV was already streamed to disk during recording.)
+  if(flightDone){ clearData(); }
   pairedId=pmDetId; updatePairedBadge();
   const ch=parseInt($("pmFreq").value,10);
   if(ch!==pmDetCh){ sendSerial("STAGE "+ch); $("chSel").value=String(ch);
@@ -1890,7 +1897,8 @@ $("stopFlightBtn").onclick=()=>{ if(confirm("Stop the flight?\n\nThis ends recor
 
 function clearData(){
   data.length=0;rawLines.length=0;pktCount=0;crcErrors=0;totalGaps=0;lastSeq=null;firstSeq=null;launchHpa=null;_padAnchor=null;
-  flightActive=false; flightName=null; flightDone=false; flightStarting=false; flightArmed=false; setRecDot(); updateFlightUi();  // arm a fresh auto-flight
+  flightActive=false; flightName=null; flightDone=false; viewingImport=false; flightStarting=false; flightArmed=false; setRecDot(); updateFlightUi();  // arm a fresh auto-flight
+  pairDismissed.clear();                            // full reset -> any sonde may prompt to pair again
   measuredWind.length=0; lastPredictMs=0;          // fresh measured-wind profile for the new flight
   if(map&&posMarker){map.removeLayer(posMarker);posMarker=null;} if(map&&launchMarker){map.removeLayer(launchMarker);launchMarker=null;}
   render();
@@ -1915,7 +1923,7 @@ function importFlightCsv(text,name){
   headerLine=DEFAULT_COLS.join(","); colMap={}; DEFAULT_COLS.forEach((n,i)=>colMap[n]=i);
   flightName=null;                                  // not tied to a server folder until Process
   const wasPaused=paused; paused=true;              // ingest silently, render once at the end
-  importing=true; flightDone=true;                  // replayed data is historical — never auto-saved
+  importing=true; flightDone=true; viewingImport=true;   // replayed data is historical — never auto-saved, no live pairing
   let rows=0;
   for(const ln of text.split(/\r?\n/)){
     const s=ln.trim(); if(!s) continue;
@@ -2012,7 +2020,9 @@ function stopFlight(){
   flightActive=false; flightArmed=false; flightDone=true;
   setRecDot(); updateFlightUi(); setAnalysisEnabled(true);
   // Unpair the sonde that just flew so the dashboard is free to pair the next one.
-  if(pairedId!=null){ log("Unpaired "+pairedId+" (flight ended)."); pairedId=null; updatePairedBadge(); }
+  // Dismiss its ID too: it may still be transmitting during recovery, and we don't
+  // want it to instantly re-prompt -- only a DIFFERENT (newly powered) sonde should.
+  if(pairedId!=null){ log("Unpaired "+pairedId+" (flight ended)."); pairDismissed.add(pairedId); pairedId=null; updatePairedBadge(); }
   $("flightStatus").innerHTML='Flight <b>'+(flightName||'')+'</b> stopped — recording ended. Click <b>Process Flight</b> to render + append the sounding.';
   log("Flight stopped — recording ended. Analysis unlocked.");
   showTab("analysis");
