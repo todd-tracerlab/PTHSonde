@@ -1,13 +1,39 @@
-# PTHSonde
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="latax/assets/logo_pthsonde_light.png">
+    <img alt="PTHSonde" src="latax/assets/logo_pthsonde.png" width="540">
+  </picture>
+</p>
 
-**A complete, open radiosonde (weather-balloon) telemetry system** — flight
-hardware firmware, a long-range LoRa ground link, and a packaged desktop ground
-station that shows live atmospheric data and renders a full SHARPpy sounding.
+<p align="center">
+  <b>A complete, open radiosonde (weather-balloon) telemetry system</b><br>
+  flight-hardware firmware · long-range LoRa ground link · packaged desktop ground station
+</p>
 
-PTHSonde flies a small ESP32-C3 payload that measures **P**ressure, **T**emperature,
-and **H**umidity (plus wind, GPS, and battery), streams it over 915 MHz LoRa to a
-ground receiver, and displays it in a one-click Windows app: live Skew-T, hodograph,
-time-series, a GFS-fed landing-prediction map, and a full SHARPpy SPC analysis panel.
+---
+
+<table>
+<tr>
+<td width="27%" align="center">
+  <img src="latax/assets/sonde_hero.png" alt="PTHSonde payload" width="185">
+</td>
+<td>
+<p>PTHSonde flies a small ESP32-C3 payload that measures <b>P</b>ressure,
+<b>T</b>emperature, and <b>H</b>umidity (plus wind, GPS, and battery), streams it over
+915&nbsp;MHz LoRa to a ground receiver, and displays it in a one-click Windows app:
+live Skew-T, hodograph, time-series, a GFS-fed landing-prediction map, and a full
+SHARPpy SPC analysis panel.</p>
+<p>Altitude, ascent rate, and the sounding are derived from the barometric pressure
+sensor, so the profile keeps building past the GPS altitude ceiling — the flight
+record is complete all the way to burst.</p>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img src="latax/assets/dash_profile.png" alt="PTHSonde desktop ground station" width="100%">
+  <br><sub><em>The desktop ground station — live Skew-T, hodograph, wind and thermodynamic profiles, and link health.</em></sub>
+</p>
 
 ---
 
@@ -88,6 +114,16 @@ Start PTHSonde.bat                              # or:  py -3.13 processor/app.py
   standard-mode ceiling.
 - **Long-range LoRa link** — the Ebyte E22 is configured at 22 dBm and a 0.3 kbps
   air rate for maximum link margin.
+
+<p align="center">
+  <img src="latax/assets/sharppy_example.png" alt="SHARPpy SPC sounding panel rendered from a PTHSonde flight" width="100%">
+  <br><sub><em>A full SHARPpy SPC analysis panel rendered from a flight's own data.</em></sub>
+</p>
+
+<p align="center">
+  <img src="latax/assets/launch.jpg" alt="A PTHSonde ascending under a weather balloon" width="300">
+  <br><sub><em>A PTHSonde ascending under balloon and parachute shortly after launch.</em></sub>
+</p>
 
 ---
 
