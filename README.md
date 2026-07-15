@@ -2,7 +2,7 @@
 
 **A complete, open radiosonde (weather-balloon) telemetry system** — flight
 hardware firmware, a long-range LoRa ground link, and a packaged desktop ground
-station that shows live atmospheric data and renders a genuine SHARPpy sounding.
+station that shows live atmospheric data and renders a full SHARPpy sounding.
 
 PTHSonde flies a small ESP32-C3 payload that measures **P**ressure, **T**emperature,
 and **H**umidity (plus wind, GPS, and battery), streams it over 915 MHz LoRa to a
@@ -50,9 +50,9 @@ time-series, a GFS-fed landing-prediction map, and a full SHARPpy SPC analysis p
 
 ## Quick start
 
-**Just run the ground station (recommended):** grab the prebuilt Windows app from
-the [**Releases**](../../releases) page, unzip, and run `PTHSonde.exe`. Plug the
-ground receiver in over USB, pick its COM port, and hit **Connect**.
+**Run the ground station (recommended):** download the prebuilt Windows app from
+the [**Releases**](../../releases) page, unzip, and run `PTHSonde.exe`. Connect the
+ground receiver over USB, select its COM port, and click **Connect**.
 
 **Run from source** (needs Python 3.13):
 ```bash
@@ -72,17 +72,22 @@ Start PTHSonde.bat                              # or:  py -3.13 processor/app.py
 - [**docs/firmware.md**](docs/firmware.md) — building & flashing both firmwares, the telemetry protocol, LED codes.
 - [**docs/dashboard.md**](docs/dashboard.md) — using the app, recording a flight, the SHARPpy analysis, building the `.exe`.
 
-## Highlights
+## Key features
 
-- **Genuine SHARPpy SPC panel** rendered headless from your own balloon's data.
-- **Barometric everything** — altitude, ascent rate, and the sounding are derived
-  from the MS5611, so they keep working above the GPS ceiling.
-- **Sensor-soak aware** — the profile automatically trims the superadiabatic
-  "warm nose" from sun-baked pad sensors so lifted indices aren't garbage.
-- **Balloon-mode GPS, verified** — the sonde asserts and *confirms* the L86's
-  high-altitude (80 km) mode, so it won't quit at the 12 km Normal-mode ceiling.
-- **Long-range LoRa** — E22 configured at the sensitivity floor (0.3 kbps air rate,
-  22 dBm) for maximum link margin.
+- **SHARPpy SPC analysis** — an SPC-style Skew-T and index panel rendered headless
+  from each flight's own data.
+- **Barometric flight data** — altitude, ascent rate, and the sounding are derived
+  directly from the MS5611 pressure sensor, so the profile continues past the GPS
+  altitude ceiling.
+- **Thermal-soak correction** — pad-heated temperature and humidity sensors carry
+  residual heat into the early climb, producing a non-physical superadiabatic layer
+  near the surface. The processor fits the true lapse rate from the clean free
+  atmosphere and removes this layer so lifted-parcel indices reflect the real profile.
+- **Confirmed balloon-mode GPS** — the sonde asserts and verifies the L86 receiver's
+  high-altitude (80 km) mode, extending position tracking beyond the 12 km
+  standard-mode ceiling.
+- **Long-range LoRa link** — the Ebyte E22 is configured at 22 dBm and a 0.3 kbps
+  air rate for maximum link margin.
 
 ---
 

@@ -13,7 +13,7 @@ processor/sonde_server.py   → owns the COM port (pyserial, background reader +
                               auto-reconnect), records the flight CSV, serves the
                               dashboard, runs the SHARPpy analysis pipeline
 Dashboard/PTHSonde.html     → the entire UI (canvas plots, no build step)
-processor/sharppy_render.py → renders the genuine SHARPpy SPC panel, headless
+processor/sharppy_render.py → renders the SHARPpy SPC panel, headless
 ```
 
 **Why Python owns the serial port:** the browser's Web Serial API stalls silently
@@ -49,29 +49,31 @@ window (channel stage/lock) are under the ⚙ Settings.
 
 ## Data quality processing
 
-Two things the pipeline does automatically so the sounding isn't garbage:
+Two corrections the pipeline applies automatically before analysis:
 
-- **Ascent trim** — drops pad rows before launch (first sustained pressure drop).
-- **Thermal-soak trim** — on a sun-baked pad the T/RH sensors read hot and bleed
-  that heat into the first part of the climb (a non-physical superadiabatic "warm
-  nose"). The processor fits the *real* lapse rate from the clean free atmosphere
-  (800–3500 m above launch), extrapolates it down, and drops the bottom rows that
-  sit >1.5 °C above that line. Implemented in both `sonde_server.py` (`_trim_soak`,
-  for CSV processing) and the live dashboard (`soakStart()`).
+- **Ascent trim** — drops pad rows recorded before launch (up to the first sustained
+  pressure drop).
+- **Thermal-soak trim** — pad-heated temperature and humidity sensors carry residual
+  heat into the first part of the climb, producing a non-physical superadiabatic layer
+  near the surface. The processor fits the true lapse rate from the clean free
+  atmosphere (800–3500 m above launch), extrapolates it downward, and removes the
+  bottom rows that sit more than 1.5 °C above that line. Implemented in both
+  `sonde_server.py` (`_trim_soak`, for CSV processing) and the live dashboard
+  (`soakStart()`).
 
-Altitude, ascent rate, and the whole sounding are derived from **barometric
-pressure**, so they keep working above the GPS ceiling.
+Altitude, ascent rate, and the full sounding are derived from **barometric pressure**,
+so they continue past the GPS altitude ceiling.
 
 ## SHARPpy render environment
 
-SHARPpy's GUI is old Qt5 code that needs **Python 3.10 + PySide2**, so it lives in a
-separate `processor/venv310/` (not committed — 453 MB) that the 3.13 server shells
-out to. If that env is missing, the server falls back to a matplotlib Skew-T
-(indices still computed). Setup steps are in
+SHARPpy's GUI is built on Qt5 and requires **Python 3.10 + PySide2**, so it runs in a
+separate `processor/venv310/` environment (not committed — 453 MB) that the 3.13 server
+invokes. If that environment is missing, the server falls back to a matplotlib Skew-T
+(indices are still computed). Setup steps are in
 [`../processor/README.md`](../processor/README.md).
 
-Headless-render gotcha: SHARPpy asks for the `Helvetica` font, which doesn't exist
-on Windows and was being substituted by a symbol font (scrambled labels).
+Headless-render note: SHARPpy requests the `Helvetica` font, which does not exist on
+Windows and was being substituted by a symbol font (producing scrambled labels).
 `sharppy_render.py` remaps it to Arial.
 
 ## Building the `.exe`

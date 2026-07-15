@@ -3,14 +3,15 @@
 This is the Python side of the desktop app. `app.py` launches the Flask server
 (`sonde_server.py`) and opens it in a native **pywebview** window. The server owns
 the ground-receiver **COM port** (pyserial), records the flight CSV, serves
-`Dashboard/PTHSonde.html`, runs **SHARPpy**, and renders the genuine **SHARPpy SPC
-panel** (the one Pivotal Weather / SPC show) via `sharppy_render.py`.
+`Dashboard/PTHSonde.html`, runs **SHARPpy**, and renders the **SHARPpy SPC panel**
+(the same SPC-style analysis used by Pivotal Weather and the Storm Prediction Center)
+via `sharppy_render.py`.
 
 > Run the app with `Start PTHSonde.bat` (repo root) or `py -3.13 app.py`.
 > The two-Python-env note below is only about the **SHARPpy image render**.
 
 ## Architecture (two Python environments)
-SHARPpy's GUI is old Qt5 code that won't run on modern Python, so this uses two envs:
+SHARPpy's GUI is built on Qt5, which does not run on modern Python versions, so the app uses two environments:
 
 - **Main server — your Python 3.13** (`sonde_server.py`): the Flask API + SHARPpy
   thermodynamic/kinematic *index* calculations (these work on 3.13).
