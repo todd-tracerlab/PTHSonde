@@ -380,6 +380,8 @@
       <input id="setSaveDir" class="fld mono" style="flex:1;max-width:230px;padding:6px 9px" placeholder="Documents\PTHSonde"></div>
     <div class="setrow"><label>Battery capacity (CR123A)</label>
       <span style="display:flex;align-items:center;gap:6px"><input id="setBattMah" class="fld mono" type="number" step="50" style="width:90px;padding:6px 9px"><small style="color:var(--txt3)">mAh</small></span></div>
+    <div class="setrow"><label>Launch elevation <small style="color:var(--txt3)">(blank = use GPS)</small></label>
+      <span style="display:flex;align-items:center;gap:6px"><input id="setLaunchElev" class="fld mono" type="number" step="1" style="width:90px;padding:6px 9px" placeholder="auto"><small style="color:var(--txt3)">m</small></span></div>
     <div class="setrow"><label>Map auto-follow sonde</label>
       <div class="seg" id="followSeg"><button data-follow="1" class="active">On</button><button data-follow="0">Off</button></div></div>
     <div class="setrow"><label>Power-user tools</label>
@@ -944,6 +946,49 @@ function dewpoint(T,RH){ if(RH<=0)return null; const a=17.625,b=243.04;
   const g=Math.log(RH/100)+(a*T)/(b+T); return (b*g)/(a-g); }
 function pressureAltitude(hPa){ if(hPa==null||hPa<=0)return null; return 44330*(1-Math.pow(hPa/1013.25,0.190284)); }
 
+// ---- Geopotential altitude (method-3 hypsometric integration) ---------------
+// True radiosonde height: integrate the hypsometric equation layer-by-layer along
+// the flight using the sonde's OWN measured (virtual) temperature, then anchor the
+// curve at the known launch altitude (pad-averaged GPS, or a manual override). This
+// beats the plain ISA formula because it uses the real temperature profile and is
+// valid the whole way up, not just below 11 km. GPS is only the launch reference;
+// the altitude itself is barometric, so it still works above the GPS ceiling.
+const RD_AIR=287.05, G0=9.80665;
+function esatHpa(Tc){ return 6.112*Math.exp(17.62*Tc/(243.12+Tc)); }   // sat. vapour pressure, hPa
+function virtualTempK(Tc,RH,hPa){                                       // K, humidity-corrected
+  if(Tc==null||hPa==null||hPa<=0) return null;
+  let e=0; if(RH!=null&&RH>0) e=(RH/100)*esatHpa(Tc);
+  return (Tc+273.15)/(1-0.378*e/hPa);
+}
+let manualLaunchElev=null;   // metres, or null = auto (GPS)
+let _padAnchor=null;         // frozen launch offset once pad GPS is available
+// Offset that maps a record's relative geopotential height (r.relZ) to absolute
+// altitude. Manual override wins; else pad-averaged GPS at launch; else a running
+// median of (GPS alt - relZ) over available fixes; else null (fall back to ISA).
+function geoOffset(){
+  if(manualLaunchElev!=null){
+    const li=launchIndex(), idx=(li!=null?li:0);
+    const base=(data[idx]&&data[idx].relZ!=null)?data[idx].relZ:0;
+    return manualLaunchElev-base;
+  }
+  if(_padAnchor!=null) return _padAnchor;
+  const li=launchIndex();
+  if(li!=null){                                    // pad GPS fixes before launch -> best anchor
+    const alts=[]; for(let i=0;i<li;i++){ const r=data[i]; if(r.fix&&r.alt!=null) alts.push(r.alt); }
+    if(alts.length>=3){ alts.sort((a,b)=>a-b);
+      const base=(data[li].relZ!=null)?data[li].relZ:0;
+      _padAnchor=alts[alts.length>>1]-base; return _padAnchor; }
+  }
+  const diffs=[]; for(const r of data){ if(r.fix&&r.alt!=null&&r.relZ!=null) diffs.push(r.alt-r.relZ); }
+  if(diffs.length>=3){ diffs.sort((a,b)=>a-b); return diffs[diffs.length>>1]; }   // provisional
+  return null;
+}
+// Absolute altitude for a record: calibrated geopotential when anchored, else ISA.
+function geoAlt(r){ if(!r) return null;
+  if(r.relZ!=null){ const off=geoOffset(); if(off!=null) return r.relZ+off; }
+  return pressureAltitude(r.pHpa);
+}
+
 function ingest(r){
   if(firstSeq==null) firstSeq=r.seq;
   if(r.seq!=null) lastSeq=r.seq;
@@ -951,11 +996,20 @@ function ingest(r){
   pktCount=(r.pktCount!=null?r.pktCount:pktCount+1);
   lastPktMs=performance.now();
   if(launchHpa==null&&r.pHpa!=null) launchHpa=r.pHpa;
-  // vertical speed from barometric altitude vs the previous record
   const prev=data.length?data[data.length-1]:null;
+  // virtual temperature (K) for this level, from the primary thermistor (SHT fallback)
+  const Tc=(r.thermT!=null?r.thermT:r.shtT);
+  r.tvK=virtualTempK(Tc,r.shtRH,r.pHpa);
+  // relative geopotential height: hypsometric integral along the flight path
+  if(prev&&prev.relZ!=null&&prev.pHpa>0&&r.pHpa>0){
+    let tvm=(r.tvK!=null&&prev.tvK!=null)?0.5*(r.tvK+prev.tvK):(r.tvK!=null?r.tvK:prev.tvK);
+    if(tvm==null) tvm=288.15*Math.pow(0.5*(prev.pHpa+r.pHpa)/1013.25,0.190284);   // ISA fallback if no temp at all
+    r.relZ=prev.relZ+(RD_AIR/G0)*tvm*Math.log(prev.pHpa/r.pHpa);
+  } else if(r.pHpa>0){ r.relZ=(prev&&prev.relZ!=null)?prev.relZ:0; }
+  else { r.relZ=(prev&&prev.relZ!=null)?prev.relZ:null; }
+  // vertical speed from the geopotential height (offset-independent)
   r.vs=null;
-  if(prev){ const za=pressureAltitude(prev.pHpa),zb=pressureAltitude(r.pHpa),dt=r.tSec-prev.tSec;
-    if(za!=null&&zb!=null&&dt>0) r.vs=(zb-za)/dt; }
+  if(prev&&prev.relZ!=null&&r.relZ!=null){ const dt=r.tSec-prev.tSec; if(dt>0) r.vs=(r.relZ-prev.relZ)/dt; }
   data.push(r); if(data.length>MAX_POINTS) data.shift();
   if(!paused) requestRender();
 }
@@ -999,10 +1053,10 @@ function launchIndex(){
 // Falls back to the plain launch index until enough clean data exists.
 function soakStart(){
   const li=launchIndex(); if(li==null) return null;
-  const z0=pressureAltitude(data[li].pHpa); if(z0==null) return li;
+  const z0=geoAlt(data[li]); if(z0==null) return li;
   const Tof=r=>(r.thermT!=null?r.thermT:r.shtT);
   let sx=0,sy=0,sxx=0,sxy=0,m=0;
-  for(let i=li;i<data.length;i++){ const z=pressureAltitude(data[i].pHpa),t=Tof(data[i]);
+  for(let i=li;i<data.length;i++){ const z=geoAlt(data[i]),t=Tof(data[i]);
     if(z==null||t==null) continue; const dz=z-z0; if(dz<800||dz>3500) continue;
     sx+=z;sy+=t;sxx+=z*z;sxy+=z*t;m++; }
   if(m<12) return li;                          // not enough clean data yet
@@ -1010,7 +1064,7 @@ function soakStart(){
   const slope=(m*sxy-sx*sy)/den, inter=(sy-slope*sx)/m, gamma=-slope*1000;
   if(gamma<=0||gamma>12) return li;            // not a sane lapse -> pad trim only
   let cut=li, clean=0;
-  for(let i=li;i<data.length;i++){ const z=pressureAltitude(data[i].pHpa),t=Tof(data[i]);
+  for(let i=li;i<data.length;i++){ const z=geoAlt(data[i]),t=Tof(data[i]);
     if(z==null||t==null) continue;
     if(z-z0>2500) break;
     if(t>(inter+slope*z)+1.5){ cut=i+1; clean=0; }
@@ -1072,7 +1126,7 @@ function render(){
 
 function updateKpis(){
   const r=latest();
-  $("kAlt").textContent=r?fmt(pressureAltitude(r.pHpa),0):"--";   // barometric (pressure) altitude
+  $("kAlt").textContent=r?fmt(geoAlt(r),0):"--";   // geopotential altitude (GPS-anchored barometric)
   { const vs=climbNow(); const el=$("kVs");
     el.textContent=(vs==null)?"--":(vs>=0?"+":"")+vs.toFixed(1);
     el.style.color=(vs==null)?"":(vs>=0.2?"var(--good)":vs<=-0.2?"var(--bad)":""); }
@@ -1112,7 +1166,7 @@ function updateSidebar(){
   $("vUtc").textContent=((r.date?r.date+" ":"")+(r.time||"")).trim()||"--";
   set("vLat",fmt(r.lat,6)); set("vLon",fmt(r.lon,6));
   $("vAlt").innerHTML=fmt(r.alt,0)+' <small>m</small>';
-  $("vPalt").innerHTML=fmt(pressureAltitude(r.pHpa),0)+' <small>m</small>';
+  $("vPalt").innerHTML=fmt(geoAlt(r),0)+' <small>m</small>';
   { const vs=climbNow(); $("vVs").innerHTML=(vs==null)?'--':(vs>=0?"+":"")+vs.toFixed(1)+' <small>m/s</small>'; }
   $("vSpd").innerHTML=fmt(r.speed,2)+' <small>m/s</small>';
   $("vCrs").innerHTML=fmt(r.course,0)+'°';
@@ -1216,8 +1270,13 @@ function drawSeries(ctx,w,h,series,opts){
   let amin=Infinity,amax=-Infinity,vmin=Infinity,vmax=-Infinity;
   series.forEach(s=>s.pts.forEach(p=>{ if(p[0]<amin)amin=p[0]; if(p[0]>amax)amax=p[0]; if(p[1]<vmin)vmin=p[1]; if(p[1]>vmax)vmax=p[1]; }));
   if(hasSec) opts.secondary.pts.forEach(p=>{ if(p[0]<amin)amin=p[0]; if(p[0]>amax)amax=p[0]; });
-  if(!isFinite(amin)||!isFinite(vmin)){ nodata(ctx,w,h); return; }
+  // caller can force the position-axis domain so every time-series plot shares one
+  // x-axis, even when a series (e.g. wind) has no points yet (before GPS lock).
+  if(opts.axisMin!=null) amin=opts.axisMin;
+  if(opts.axisMax!=null) amax=opts.axisMax;
+  if(!isFinite(amin)||!isFinite(amax)){ nodata(ctx,w,h); return; }
   if(amax-amin<1e-9) amax=amin+1;
+  if(!isFinite(vmin)||!isFinite(vmax)){ vmin=0; vmax=1; }   // no value points yet: draw the empty frame on the shared time axis
   if(vmax-vmin<1e-6){ vmax+=1; vmin-=1; }
   const vpad=(vmax-vmin)*0.08; vmin-=vpad; vmax+=vpad;
   const Ax=a=>x0+(a-amin)/(amax-amin)*(x1-x0);
@@ -1279,7 +1338,7 @@ function drawSeries(ctx,w,h,series,opts){
       ctx.fillStyle=TH.lbl2;ctx.fillText(it.label,lx+15,ly-2); lx+=15+ctx.measureText(it.label).width+13; }); }
 }
 // axis value for a record under the current mode (time seconds or baro altitude)
-function axisOf(r){ return plotMode==="time" ? r.tSec : pressureAltitude(r.pHpa); }
+function axisOf(r){ return plotMode==="time" ? r.tSec : geoAlt(r); }
 // build [axis,value] points, skipping records missing either
 function ptsOf(getV){ const o=[]; for(const r of data){ const a=axisOf(r); if(a==null)continue; const v=getV(r); if(v==null)continue; o.push([a,v]); } return o; }
 // centered N-point moving average over an [axis,value] series (returns [axis,avg])
@@ -1349,14 +1408,19 @@ function vProfile(canvasId,pts,opt){
 //  Time-Series tab — temp / ascent rate / wind / dewpoint vs elapsed time
 // ============================================================================
 function drawTimeseries(){
-  const t0=data.length?data[0].tSec:0;
-  const opts={axisIsTime:true,axisFmt:a=>fmtClock(a-t0),fixed:1};
+  // shared time domain [t0, tN] so EVERY time plot lines up on one x-axis --- even
+  // before GPS lock, when the wind series still has no points. The wind plot then
+  // advances its time axis with the others and, once locked, its data lands at the
+  // correct shared x position instead of restarting from the left edge.
+  let t0=null,tN=null;
+  for(const r of data){ if(r.tSec==null)continue; if(t0==null)t0=r.tSec; tN=r.tSec; }
+  if(t0==null){ t0=0; tN=0; }
+  const opts={axisIsTime:true,axisFmt:a=>fmtClock(a-t0),fixed:1,axisMin:t0,axisMax:tN};
   const ts=getV=>{ const o=[]; for(const r of data){ if(r.tSec==null)continue; const v=getV(r); if(v==null)continue; o.push([r.tSec,v]); } return o; };
   // series = [{color,pts}...]; extra overrides drawSeries opts (fixed, legend, ...)
   const card=(id,series,nowId,nowTxt,extra)=>{ const c=$(id); if(!c)return;
     const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
-    if(!series.some(s=>s.pts.length>=2)) nodata(ctx,w,h);
-    else drawSeries(ctx,w,h,series,Object.assign({},opts,extra||{}));
+    drawSeries(ctx,w,h,series,Object.assign({},opts,extra||{}));
     if(nowId&&$(nowId)) $(nowId).textContent=nowTxt; };
   const r=latest();
   // ---- left column: temperature, dewpoint, wind speed ----
@@ -1366,10 +1430,10 @@ function drawTimeseries(){
   // ---- right column: ascent rate, altitude (pressure + GPS), humidity ----
   card("tsAsc",[{color:"#22d3ee",pts:climbSeries()}], "tnA",
        (()=>{const v=climbNow();return v==null?"--":(v>=0?"+":"")+v.toFixed(1)+" m/s";})());
-  card("tsAlt",[{color:"#4a9eff",pts:ts(x=>pressureAltitude(x.pHpa))},
+  card("tsAlt",[{color:"#4a9eff",pts:ts(x=>geoAlt(x))},
                 {color:"#9aa7b6",pts:ts(x=>(x.fix&&x.alt)?x.alt:null)}], "tnZ",
-       r?fmt(pressureAltitude(r.pHpa),0)+" m":"--",
-       {fixed:0,legend:[{label:"pressure",color:"#4a9eff"},{label:"GPS",color:"#9aa7b6"}]});
+       r?fmt(geoAlt(r),0)+" m":"--",
+       {fixed:0,legend:[{label:"baro",color:"#4a9eff"},{label:"GPS",color:"#9aa7b6"}]});
   card("tsRH",[{color:"#a78bfa",pts:ts(x=>x.shtRH)}], "tnH", r&&r.shtRH!=null?fmt(r.shtRH,0)+" %":"--");
 }
 
@@ -1377,7 +1441,7 @@ function drawTimeseries(){
 // source used by BOTH the hodograph and the skew-T wind barbs.
 function avgWinds(){
   const raw=[]; for(const rr of profileData()){ if(!rr.fix||rr.windDeg==null||rr.speed==null) continue;
-    const z=(rr.alt!=null?rr.alt:pressureAltitude(rr.pHpa)); if(z==null) continue;
+    const z=(rr.alt!=null?rr.alt:geoAlt(rr)); if(z==null) continue;
     const a=rr.windDeg*Math.PI/180; raw.push({z,p:rr.pHpa,u:-rr.speed*Math.sin(a),v:-rr.speed*Math.cos(a)}); }
   if(!raw.length) return [];
   const bins=new Map();
@@ -1809,7 +1873,7 @@ $("demoBtn").onclick=toggleDemo;
 $("stopFlightBtn").onclick=()=>{ if(confirm("Stop the flight?\n\nThis ends recording to the CSV. You can then Process it on the Analysis tab.")) stopFlight(); };
 
 function clearData(){
-  data.length=0;rawLines.length=0;pktCount=0;crcErrors=0;totalGaps=0;lastSeq=null;firstSeq=null;launchHpa=null;
+  data.length=0;rawLines.length=0;pktCount=0;crcErrors=0;totalGaps=0;lastSeq=null;firstSeq=null;launchHpa=null;_padAnchor=null;
   flightActive=false; flightName=null; flightDone=false; flightStarting=false; flightArmed=false; setRecDot(); updateFlightUi();  // arm a fresh auto-flight
   measuredWind.length=0; lastPredictMs=0;          // fresh measured-wind profile for the new flight
   if(map&&posMarker){map.removeLayer(posMarker);posMarker=null;} if(map&&launchMarker){map.removeLayer(launchMarker);launchMarker=null;}
@@ -2393,6 +2457,9 @@ $("settingsModal").onclick=e=>{ if(e.target===$("settingsModal")) $("settingsMod
 document.querySelectorAll('#themeSeg button, #themeSegHdr button').forEach(b=>b.onclick=()=>applyTheme(b.dataset.theme));
 $("setBattMah").onchange=()=>{ const v=+$("setBattMah").value; if(v>0){ CR123_MAH=v;
   try{ localStorage.setItem("pth_battmah",String(v)); }catch(e){} requestRender(); } };
+$("setLaunchElev").onchange=()=>{ const s=$("setLaunchElev").value.trim();
+  manualLaunchElev=(s===""||isNaN(+s))?null:+s;
+  try{ localStorage.setItem("pth_launchelev",s); }catch(e){} requestRender(); };
 $("setSaveDir").onchange=()=>{ const v=$("setSaveDir").value.trim();
   try{ localStorage.setItem("pth_savedir",v); }catch(e){} postSaveDir(v); };
 document.querySelectorAll('#followSeg button').forEach(b=>b.onclick=()=>{ followMap=(b.dataset.follow==="1");
@@ -2428,6 +2495,7 @@ $("radioModal").onclick=e=>{ if(e.target===$("radioModal")) $("radioModal").styl
   applyTheme(t);
   try{ const m=localStorage.getItem("pth_battmah"); CR123_MAH=m?+m:CR123_MAH; }catch(e){}
   if($("setBattMah")) $("setBattMah").value=CR123_MAH;
+  try{ const le=localStorage.getItem("pth_launchelev"); if(le!=null&&le!==""){ manualLaunchElev=isNaN(+le)?null:+le; if($("setLaunchElev")) $("setLaunchElev").value=le; } }catch(e){}
   try{ const sd=localStorage.getItem("pth_savedir")||""; if($("setSaveDir")) $("setSaveDir").value=sd; if(sd) postSaveDir(sd); }catch(e){}
   let pu=false; try{ pu=localStorage.getItem("pth_power")==="1"; }catch(e){}
   applyPowerUser(pu);
