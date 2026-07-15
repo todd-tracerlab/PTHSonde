@@ -100,20 +100,17 @@ Start PTHSonde.bat                              # or:  py -3.13 processor/app.py
 
 ## Key features
 
-- **SHARPpy SPC analysis** — an SPC-style Skew-T and index panel rendered headless
-  from each flight's own data.
-- **Barometric flight data** — altitude, ascent rate, and the sounding are derived
-  directly from the MS5611 pressure sensor, so the profile continues past the GPS
-  altitude ceiling.
-- **Thermal-soak correction** — pad-heated temperature and humidity sensors carry
-  residual heat into the early climb, producing a non-physical superadiabatic layer
-  near the surface. The processor fits the true lapse rate from the clean free
-  atmosphere and removes this layer so lifted-parcel indices reflect the real profile.
-- **Confirmed balloon-mode GPS** — the sonde asserts and verifies the L86 receiver's
-  high-altitude (80 km) mode, extending position tracking beyond the 12 km
-  standard-mode ceiling.
-- **Long-range LoRa link** — the Ebyte E22 is configured at 22 dBm and a 0.3 kbps
-  air rate for maximum link margin.
+- **Complete soundings, every flight** — a full SHARPpy SPC Skew-T, hodograph, and
+  severe-weather index panel, rendered from your balloon's own data.
+- **Data all the way to burst** — altitude, ascent rate, and the profile come from the
+  onboard pressure sensor, so the sounding never stops at the GPS ceiling.
+- **Research-grade profiles** — automatic thermal-soak correction removes surface heat
+  bias from the lowest levels, so lifted-parcel indices reflect the true atmosphere.
+- **High-altitude tracking** — verified GPS balloon mode follows the flight to 80 km,
+  well past the 12 km limit of standard receivers.
+- **Long-range downlink** — a 22 dBm LoRa link engineered for maximum range and margin.
+- **Reusable payload** — a rugged, recoverable sonde with a swappable battery and a
+  unique per-unit ID.
 
 <p align="center">
   <img src="latax/assets/sharppy_example.png" alt="SHARPpy SPC sounding panel rendered from a PTHSonde flight" width="100%">
