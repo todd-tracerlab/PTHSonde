@@ -1857,6 +1857,16 @@ function setBasemap(key){
   const sel=$("basemapSel"); if(sel && sel.value!==key) sel.value=key;
   try{ localStorage.setItem("pth_basemap",key); }catch(e){}
 }
+// A dashed prediction path drawn as a dark casing UNDER a bright core, so it stays
+// visible on any basemap (the old thin, half-transparent gray lines vanished on
+// satellite/dark). Returns a wrapper with the same setLatLngs() the callers use.
+function casedLine(coreColor, coreWeight, dash){
+  const casing=L.polyline([],{color:"#050d16",weight:coreWeight+3.5,opacity:.9,dashArray:dash,lineCap:"round",lineJoin:"round"}).addTo(map);
+  const core  =L.polyline([],{color:coreColor,weight:coreWeight,opacity:1,dashArray:dash,lineCap:"round",lineJoin:"round"}).addTo(map);
+  return { casing, core,
+    setLatLngs(ll){ casing.setLatLngs(ll||[]); core.setLatLngs(ll||[]); },
+    bringToFront(){ casing.bringToFront(); core.bringToFront(); } };
+}
 function buildLeafletMap(){
   if(map) return true; if(typeof L==="undefined") return false;
   map=L.map("map",{zoomControl:true,attributionControl:true,preferCanvas:true}).setView([39.5,-98.35],4);
@@ -1865,10 +1875,12 @@ function buildLeafletMap(){
   // polylines so it reads over any basemap. Round joins/caps keep it clean.
   trackCasing=L.polyline([],{color:"#04121f",weight:8,opacity:.9,lineJoin:"round",lineCap:"round"}).addTo(map);
   trackLine  =L.polyline([],{color:"#19e3ff",weight:4.5,opacity:1,lineJoin:"round",lineCap:"round"}).addTo(map);
-  baseAscentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
-  baseDescentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
-  predAscentLine=L.polyline([],{color:"#22d3ee",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
-  predDescentLine=L.polyline([],{color:"#f5a623",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
+  // Frozen initial GFS-only prediction (reference) — visible but secondary.
+  baseAscentLine =casedLine("#cdd6e6",2.5,"2,8");
+  baseDescentLine=casedLine("#cdd6e6",2.5,"2,8");
+  // Live prediction — bold + bright: cyan ascent, orange descent.
+  predAscentLine =casedLine("#25e0ff",4,"10,7");
+  predDescentLine=casedLine("#ff9a1f",4,"10,7");
   map.on("click",e=>{ if(!pickMode)return; setLaunch(e.latlng.lat,e.latlng.lng); setPickMode(false); });
   let saved="streets"; try{ saved=localStorage.getItem("pth_basemap")||"satellite"; }catch(e){ saved="satellite"; }
   if(!TRACK_STYLE[saved]) saved="satellite";
