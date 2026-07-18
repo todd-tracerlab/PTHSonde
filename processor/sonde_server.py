@@ -232,6 +232,59 @@ def flight_new():
     STATE["name"] = name
     return jsonify({"name": name, "path": path})
 
+@app.route("/flight/list")
+def flight_list():
+    """List saved flights (folders with a data.csv) under the save dir, newest
+    first — for the 'Open Past Flight' browser."""
+    root = STATE.get("save_dir") or DEFAULT_SAVE
+    out = []
+    if os.path.isdir(root):
+        for name in os.listdir(root):
+            d = os.path.join(root, name)
+            csv = os.path.join(d, "data.csv")
+            if not (os.path.isdir(d) and os.path.exists(csv)):
+                continue
+            rows, processed = 0, False
+            try:
+                with open(csv, "r", encoding="utf-8", errors="replace") as f:
+                    for ln in f:
+                        s = ln.strip()
+                        if not s:
+                            continue
+                        if s.startswith("#"):
+                            if "SOUNDING ANALYSIS" in s:
+                                processed = True
+                            continue
+                        if s.startswith("rx_ms"):
+                            continue
+                        rows += 1
+            except OSError:
+                pass
+            out.append({"name": name, "rows": rows, "processed": processed,
+                        "custom": os.path.exists(os.path.join(d, "data_CS.csv"))})
+    out.sort(key=lambda x: x["name"], reverse=True)     # names are timestamps -> newest first
+    return jsonify({"flights": out, "root": root})
+
+@app.route("/flight/open", methods=["POST", "OPTIONS"])
+def flight_open():
+    """Bind an EXISTING saved flight folder as the active flight and return its
+    raw CSV so the dashboard can replay it. Processing then writes back into this
+    same folder (no new dated folder is created)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    body = request.get_json(force=True, silent=True) or {}
+    root = STATE.get("save_dir") or DEFAULT_SAVE
+    safe = os.path.basename((body.get("name") or "").strip())   # no path traversal
+    d = os.path.join(root, safe)
+    csv = os.path.join(d, "data.csv")
+    if not (safe and os.path.isdir(d) and os.path.exists(csv)):
+        return jsonify({"error": "Flight not found: %s" % (body.get("name") or "")}), 404
+    STATE["flight_dir"] = d
+    STATE["name"] = safe
+    with open(csv, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return jsonify({"name": safe, "path": d, "csv": text})
+
 @app.route("/flight/append", methods=["POST", "OPTIONS"])
 def flight_append():
     if request.method == "OPTIONS":
@@ -258,7 +311,11 @@ def flight_process():
     body = request.get_json(force=True, silent=True) or {}
     csv_path = os.path.join(STATE["flight_dir"], "data.csv")
     # The dashboard may post the full dataset at process time; (re)write it.
-    if body.get("rows"):
+    # EXCEPTION: a custom-surface re-process must NOT overwrite an existing raw
+    # data.csv (output goes to data_CS.csv instead), so leave the raw file intact
+    # when overrides are set and data.csv already exists.
+    custom_run = bool(body.get("overrides"))
+    if body.get("rows") and not (custom_run and os.path.exists(csv_path)):
         with open(csv_path, "w", encoding="utf-8") as f:
             if body.get("header"):
                 f.write(body["header"].rstrip("\n") + "\n")
@@ -266,7 +323,8 @@ def flight_process():
     if not os.path.exists(csv_path):
         return jsonify({"error": "No data.csv in the flight folder yet."}), 400
     try:
-        return jsonify(process_sounding(csv_path, STATE["flight_dir"]))
+        return jsonify(process_sounding(csv_path, STATE["flight_dir"],
+                                        overrides=body.get("overrides") or None))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -594,6 +652,236 @@ def build_profile_arrays(rows):
     _average_winds(cleaned)              # 500 m bin + 5-pt smooth, matching the dashboard
     return cleaned
 
+# -------------------------------------------------- custom surface override ---
+def _fnum(v):
+    try:
+        f = float(v)
+        return None if (f != f or f in (float("inf"), float("-inf"))) else f
+    except (TypeError, ValueError):
+        return None
+
+def apply_surface_overrides(pts, ov):
+    """Apply the user's custom surface / start-pressure to the built profile.
+
+    ov keys (all optional, from the dashboard's "Set custom surface" form):
+      start_p : truncate the sounding — drop every level with p > start_p and
+                make start_p the new surface (values interpolated from the
+                profile unless overridden below)
+      p       : surface pressure (hPa) — same truncation rule as start_p
+      t       : surface temperature (C)
+      rh      : surface relative humidity (%)  -> dewpoint recomputed
+      ws      : surface wind speed (m/s)
+      wd      : surface wind direction (deg FROM)
+
+    Returns (pts, desc) where desc is a human-readable summary or None if no
+    override was applied."""
+    if not ov or not pts:
+        return pts, None
+    start_p = _fnum(ov.get("start_p"))
+    sp, st = _fnum(ov.get("p")), _fnum(ov.get("t"))
+    srh, sws, swd = _fnum(ov.get("rh")), _fnum(ov.get("ws")), _fnum(ov.get("wd"))
+    if all(v is None for v in (start_p, sp, st, srh, sws, swd)):
+        return pts, None
+
+    cut = sp if sp is not None else start_p            # new surface pressure
+    if cut is not None:
+        cut = min(cut, pts[0]["p"])                    # can't go below the data
+        above = [x for x in pts if x["p"] < cut - 0.1]
+        # interpolate profile values AT the cut pressure for surface defaults
+        lower = [x for x in pts if x["p"] >= cut - 0.1]
+        lo = lower[-1] if lower else pts[0]
+        hi = above[0] if above else lo
+        def lerp(k):
+            a, b = lo.get(k), hi.get(k)
+            if a is None or b is None or lo["p"] == hi["p"]:
+                return a if a is not None else b
+            f = (math.log(lo["p"]) - math.log(cut)) / (math.log(lo["p"]) - math.log(hi["p"]))
+            return a + (b - a) * f
+        sfc = {"p": cut, "t": lerp("t"), "td": lerp("td"),
+               "h": lerp("h") if lerp("h") is not None else _baro_alt(cut),
+               "wd": lerp("wd"), "ws": lerp("ws")}
+        pts = [sfc] + above
+    if len(pts) < 5:
+        raise ValueError("Custom surface leaves fewer than 5 levels — raise the start pressure.")
+
+    s = pts[0]
+    if st is not None:
+        s["t"] = st
+    if srh is not None:
+        base_t = st if st is not None else s["t"]
+        td = _dewpoint(base_t, max(0.5, min(100.0, srh)))
+        if td is not None:
+            s["td"] = td
+    if s["td"] is not None and s["t"] is not None and s["td"] > s["t"]:
+        s["td"] = s["t"]                                # saturation cap
+    if sws is not None:
+        s["ws"] = sws * 1.94384                         # m/s -> kt (profile convention)
+    if swd is not None:
+        s["wd"] = swd % 360.0
+
+    bits = []
+    if cut is not None:
+        bits.append("sfc %.1f hPa" % s["p"])
+    if st is not None:
+        bits.append("T %.1fC" % st)
+    if srh is not None:
+        bits.append("RH %.0f%%" % srh)
+    if sws is not None:
+        bits.append("wind %.1f m/s" % sws)
+    if swd is not None:
+        bits.append("dir %03d" % swd)
+    return pts, "custom surface: " + ", ".join(bits)
+
+# ----------------------------------------------- operational products ----------
+def _rh_from_t_td(t, td):
+    if t is None or td is None:
+        return None
+    es = lambda x: 6.112 * math.exp(17.67 * x / (x + 243.5))
+    return max(0.0, min(100.0, 100.0 * es(td) / es(t)))
+
+def _interp_at_p(pts, p_want):
+    """Linear-in-log-p interpolation of t/td at a pressure level."""
+    if not pts or p_want > pts[0]["p"] or p_want < pts[-1]["p"]:
+        return None, None
+    for i in range(1, len(pts)):
+        if pts[i]["p"] <= p_want:
+            lo, hi = pts[i - 1], pts[i]
+            if lo["p"] == hi["p"]:
+                return lo["t"], lo["td"]
+            f = (math.log(lo["p"]) - math.log(p_want)) / (math.log(lo["p"]) - math.log(hi["p"]))
+            t = lo["t"] + (hi["t"] - lo["t"]) * f
+            td = lo["td"] + (hi["td"] - lo["td"]) * f
+            return t, td
+    return None, None
+
+def simple_products(pts):
+    """Operational-met products computable without SHARPpy: fire weather
+    (Haines, Fosberg, ventilation), icing layers, freezing level."""
+    prods = {}
+    if len(pts) < 5:
+        return prods
+    sfc = pts[0]
+    sfc_h = sfc["h"] if sfc["h"] is not None else _baro_alt(sfc["p"])
+
+    # ---- Haines Index (variant auto-picked from surface pressure) ----
+    try:
+        if sfc["p"] >= 940:
+            var, pl, pu = "low", 950.0, 850.0
+            pl = min(pl, sfc["p"] - 1)                 # station above 950 -> use sfc
+            A_b = (3, 7)   # <=3 ->1, 4..7 ->2, >=8 ->3
+            B_b = (5, 9)
+        elif sfc["p"] >= 800:
+            var, pl, pu = "mid", 850.0, 700.0
+            pl = min(pl, sfc["p"] - 1)
+            A_b = (5, 10)
+            B_b = (5, 12)
+        else:
+            var, pl, pu = "high", 700.0, 500.0
+            pl = min(pl, sfc["p"] - 1)
+            A_b = (17, 21)
+            B_b = (14, 20)
+        t_lo, td_lo = _interp_at_p(pts, pl)
+        t_up, _ = _interp_at_p(pts, pu)
+        if None not in (t_lo, td_lo, t_up):
+            dA = t_lo - t_up
+            dB = t_lo - td_lo
+            A = 1 if dA <= A_b[0] else (2 if dA <= A_b[1] else 3)
+            B = 1 if dB <= B_b[0] else (2 if dB <= B_b[1] else 3)
+            prods["haines"] = A + B
+            prods["haines_var"] = var
+    except Exception:
+        pass
+
+    # ---- Fosberg Fire Weather Index (surface T/RH/wind) ----
+    try:
+        rh = _rh_from_t_td(sfc["t"], sfc["td"])
+        ws_ms = (sfc["ws"] / 1.94384) if sfc["ws"] is not None else None
+        if rh is not None and sfc["t"] is not None:
+            Tf = sfc["t"] * 9 / 5 + 32
+            U = (ws_ms or 0.0) * 2.23694               # mph
+            if rh < 10:
+                m = 0.03229 + 0.281073 * rh - 0.000578 * rh * Tf
+            elif rh <= 50:
+                m = 2.22749 + 0.160107 * rh - 0.01478 * Tf
+            else:
+                m = 21.0606 + 0.005565 * rh * rh - 0.00035 * rh * Tf - 0.483199 * rh
+            m = max(0.0, m)
+            x = m / 30.0
+            eta = 1 - 2 * x + 1.5 * x * x - 0.5 * x ** 3
+            prods["fosberg"] = round(max(0.0, min(100.0, eta * math.sqrt(1 + U * U) / 0.3002)), 1)
+    except Exception:
+        pass
+
+    # ---- Mixing height (parcel method), transport wind, ventilation rate ----
+    try:
+        mh = None
+        t0 = sfc["t"]
+        for x in pts[1:]:
+            if x["h"] is None or x["t"] is None:
+                continue
+            agl = x["h"] - sfc_h
+            if agl <= 0:
+                continue
+            if agl > 6000:
+                break
+            parcel = t0 - 0.0098 * agl                 # dry adiabat from the surface
+            if x["t"] > parcel:                        # environment warmer -> capped
+                mh = agl
+                break
+        if mh is None:
+            mh = min(6000.0, (pts[-1]["h"] or sfc_h) - sfc_h)
+        ws_in = [x["ws"] / 1.94384 for x in pts
+                 if x["ws"] is not None and x["h"] is not None
+                 and 0 <= (x["h"] - sfc_h) <= max(mh, 1)]
+        tw = sum(ws_in) / len(ws_in) if ws_in else None
+        prods["mix_m"] = round(mh)
+        if tw is not None:
+            prods["transport_ms"] = round(tw, 1)
+            prods["vent"] = round(mh * tw)
+    except Exception:
+        pass
+
+    # ---- Icing layers (T 0..-20 C with high RH) + freezing level ----
+    try:
+        layers = []
+        cur = None
+        fzl = None
+        prev = None
+        for x in pts:
+            if x["h"] is None or x["t"] is None:
+                continue
+            agl = x["h"] - sfc_h
+            if fzl is None and prev is not None and prev["t"] > 0 >= x["t"]:
+                f = prev["t"] / (prev["t"] - x["t"]) if prev["t"] != x["t"] else 0
+                fzl = (prev["h"] + f * (x["h"] - prev["h"])) - sfc_h
+            rh = _rh_from_t_td(x["t"], x["td"])
+            sev = None
+            if -20.0 <= x["t"] <= 0.0 and rh is not None:
+                if rh >= 85:
+                    sev = 2                            # moderate
+                elif rh >= 70:
+                    sev = 1                            # light
+            if sev:
+                if cur and cur["sev"] == sev and agl - cur["top"] < 400:
+                    cur["top"] = agl
+                else:
+                    if cur:
+                        layers.append(cur)
+                    cur = {"base": agl, "top": agl, "sev": sev}
+            elif cur and agl - cur["top"] >= 400:
+                layers.append(cur)
+                cur = None
+            prev = x
+        if cur:
+            layers.append(cur)
+        prods["icing"] = [{"base": round(l["base"]), "top": round(max(l["top"], l["base"] + 50)),
+                           "sev": l["sev"]} for l in layers if l["top"] > 0]
+        if fzl is not None and fzl > 0:
+            prods["fzl_m"] = round(fzl)
+    except Exception:
+        pass
+    return prods
+
 # ------------------------------------------------------------- indices --------
 def sharppy_indices(pts):
     """Compute SHARPpy indices. Returns (flat_dict, extras) or raises."""
@@ -681,7 +969,49 @@ def sharppy_indices(pts):
         extras["wetbulb"] = [float(x) for x in prof.wetbulb]
     except Exception:
         extras["wetbulb"] = None
-    return idx, extras
+
+    # ---- operational composites / extra products for the ops panel ----
+    prods = {}
+    mucape = cape(mu) or 0
+    sbcape = cape(sfc) or 0
+    mlcape = cape(ml) or 0
+    srh1 = idx.get("0-1km SRH (m2/s2)")
+    srh3 = idx.get("0-3km SRH (m2/s2)")
+    bwd6 = idx.get("0-6km Shear (kt)")
+    try:
+        if srh3 is not None and bwd6 is not None:
+            prods["scp"] = f(params.scp(mucape, srh3, bwd6), 1)
+    except Exception:
+        pass
+    try:
+        lcl = f(sfc.lclhght)
+        if None not in (srh1, bwd6, lcl):
+            prods["stp"] = f(params.stp_fixed(sbcape, lcl, srh1, bwd6), 1)
+    except Exception:
+        pass
+    try:
+        prods["ship"] = f(params.ship(prof), 1)
+    except Exception:
+        pass
+    try:
+        prods["dcape"] = f(params.dcape(prof)[0])
+    except Exception:
+        pass
+    try:
+        prods["lr75"] = f(params.lapse_rate(prof, 700., 500., pres=True), 1)
+        prods["lr03"] = f(params.lapse_rate(prof, 0., 3000., pres=False), 1)
+    except Exception:
+        pass
+    # wet-bulb zero height (m AGL) — hail size discriminator
+    try:
+        p_wbz = params.temp_lvl(prof, 0, wetbulb=True)
+        h_wbz = interp.to_agl(prof, interp.hght(prof, p_wbz))
+        prods["wbz_m"] = f(h_wbz)
+    except Exception:
+        pass
+    prods["mlcape"] = mlcape
+    prods["mlcin"] = idx.get("MLCIN (J/kg)")
+    return idx, extras, prods
 
 # -------------------------------------------------------------- plotting ------
 def _vec2comp(wd, ws):                       # met wind -> u,v (kt)
@@ -812,8 +1142,15 @@ def render_sharppy_real(pts, out_dir, lat, lon, launch_t=None):
     cand = [os.environ.get("PTHSONDE_VENV"),
             os.path.join(APP_DIR, "venv310", "Scripts", "python.exe"),
             os.path.join(APP_DIR, "processor", "venv310", "Scripts", "python.exe"),
-            os.path.join(os.path.dirname(APP_DIR), "venv310", "Scripts", "python.exe"),
             os.path.join(BASE, "venv310", "Scripts", "python.exe")]
+    # Walk up several parent dirs looking for venv310 (and its processor/ subdir).
+    # A frozen exe lives at processor\dist\PTHSonde\, so the real venv310 sits two
+    # levels up in the dev tree — search generously so any launch layout resolves.
+    up = APP_DIR
+    for _ in range(4):
+        cand.append(os.path.join(up, "venv310", "Scripts", "python.exe"))
+        cand.append(os.path.join(up, "processor", "venv310", "Scripts", "python.exe"))
+        up = os.path.dirname(up)
     venv = next((c for c in cand if c and os.path.exists(c)), None)
     script = os.path.join(BASE, "sharppy_render.py")
     if not venv:
@@ -831,9 +1168,39 @@ def render_sharppy_real(pts, out_dir, lat, lon, launch_t=None):
     outpng = os.path.join(out_dir, "sharppy.png")
     with open(injson, "w", encoding="utf-8") as f:
         json.dump(payload, f)
+    # SANITIZE the child environment. A frozen PyInstaller parent (Python 3.13)
+    # leaks PYTHONHOME/PYTHONPATH and puts its own bundle dir (holding python313.dll)
+    # on PATH. Inherited by the 3.10 venv python, that makes it load 3.13 stdlib /
+    # binary extensions -> "python313 conflicts" and the render dies. Strip the
+    # Python-controlling vars, drop the frozen bundle dirs from PATH, and point the
+    # child at its own venv so it resolves ITS interpreter and site-packages only.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONEXECUTABLE",
+                        "PYTHONNOUSERSITE", "PYTHONDONTWRITEBYTECODE", "__PYVENV_LAUNCHER__")
+           and not k.startswith("_PYI")}
+    venv_root = os.path.dirname(os.path.dirname(venv))          # ...\venv310
+    bundle_dirs = [os.path.normcase(os.path.abspath(d))
+                   for d in (RES, APP_DIR, os.path.dirname(sys.executable)) if d]
+    keep = [p for p in env.get("PATH", "").split(os.pathsep)
+            if p and not any(os.path.normcase(os.path.abspath(p)).startswith(b) for b in bundle_dirs)]
+    env["VIRTUAL_ENV"] = venv_root
+    env["PATH"] = os.pathsep.join([os.path.join(venv_root, "Scripts"), venv_root] + keep)
+    # Run the venv python in ISOLATED mode (-I). The script lives in the frozen
+    # exe's _internal dir, which is full of Python 3.13's bundled .pyd files and
+    # python313.dll. Python normally puts the script's own directory first on
+    # sys.path, so the 3.10 venv would import 3.13's _socket.pyd (etc.) from there
+    # and blow up with "Module use of python313.dll conflicts". -I drops the script
+    # dir from sys.path (and ignores PYTHON* env / user site) so only the venv's own
+    # stdlib + site-packages load. Combined with the sanitized env above, the 3.10
+    # interpreter stays fully isolated from the 3.13 host.
+    # CREATE_NO_WINDOW: the venv python.exe is a console program, so without this a
+    # black console window flashes on screen for every render. Hide it (Windows-only
+    # flag; 0 elsewhere).
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        r = subprocess.run([venv, script, injson, outpng],
-                           capture_output=True, text=True, timeout=180)
+        r = subprocess.run([venv, "-I", script, injson, outpng],
+                           capture_output=True, text=True, timeout=180, env=env,
+                           creationflags=no_window)
     except Exception as e:
         return None, "render subprocess error: %s" % e
     try:
@@ -843,6 +1210,12 @@ def render_sharppy_real(pts, out_dir, lat, lon, launch_t=None):
     if os.path.exists(outpng) and os.path.getsize(outpng) > 2000:
         _brand_sharppy(outpng, lat, lon, launch_t)
         return outpng, None
+    try:
+        with open(os.path.join(out_dir, "_render_err.txt"), "w", encoding="utf-8") as _f:
+            _f.write("CMD: %s\nPATH: %s\n\nSTDERR:\n%s\n\nSTDOUT:\n%s\n"
+                     % (venv, env.get("PATH", ""), r.stderr, r.stdout))
+    except Exception:
+        pass
     return None, "render failed: " + ((r.stderr or r.stdout or "")[-300:])
 
 def _brand_sharppy(png_path, lat=None, lon=None, launch_t=None):
@@ -888,20 +1261,27 @@ def _brand_sharppy(png_path, lat=None, lon=None, launch_t=None):
         pass
 
 # ------------------------------------------------------------- pipeline -------
-def process_sounding(csv_path, out_dir):
+def process_sounding(csv_path, out_dir, overrides=None):
     rows, raw = _read_csv(csv_path)
     _smooth_rows(rows)                     # smooth RH + SHT temp (-> smooth dewpoint)
     pts = build_profile_arrays(rows)
     if len(pts) < 5:
         return {"error": "Not enough valid sounding levels yet (need pressure + temperature)."}
 
-    idx, extras, sharppy_err = {}, {}, None
+    # user-supplied custom surface / start pressure (Analysis tab "Set custom surface")
     try:
-        idx, extras = sharppy_indices(pts)
+        pts, custom_desc = apply_surface_overrides(pts, overrides)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    idx, extras, prods, sharppy_err = {}, {}, {}, None
+    try:
+        idx, extras, prods = sharppy_indices(pts)
     except ImportError:
         sharppy_err = "SHARPpy not installed (pip install sharppy). Image generated; indices skipped."
     except Exception as e:
         sharppy_err = "SHARPpy error: %s" % e
+    prods.update(simple_products(pts))     # fire wx / icing / ventilation (no SHARPpy needed)
 
     # launch fix: date/time + lat/lon from the first SOLID GPS packet (real fix +
     # satellites), skipping cold-start glitches. Date comes from the GPS if present,
@@ -948,6 +1328,8 @@ def process_sounding(csv_path, out_dir):
             "# levels=%d  top=%.0f hPa  surface=%.0f hPa" % (len(pts), pts[-1]["p"], sfc["p"]),
             "# surface  T=%.1fC  Td=%.1fC%s" % (sfc["t"], sfc["td"],
                 ("  (median of %d near-launch samples)" % sfc["n"]) if sfc.get("n") else "  (single packet)")]
+    if custom_desc:
+        head.append("# " + custom_desc)
     if sharppy_err:
         head.append("# " + sharppy_err)
     for k, v in idx.items():
@@ -964,22 +1346,40 @@ def process_sounding(csv_path, out_dir):
             ("%.1f" % x["ws"]) if x["ws"] is not None else "NA",
             ("%.1f" % (x["ws"] / 1.94384)) if x["ws"] is not None else "NA"))
     prof_lines.append("# =====================================")
-    # Rewrite the flight CSV: analysis header + the SMOOTHED data rows (clean
-    # header + rows, so re-processing can't accumulate stale comment blocks) +
-    # the processed profile. Reconstructed from the parsed rows so the saved
-    # sht_rh_pct / sht_temp_c carry the smoothing.
+    # Write the analysis output. A CUSTOM-SURFACE run goes to a SEPARATE file
+    # (data_CS.csv) so repeated re-processing with a custom surface never touches
+    # the raw data.csv — the user can keep tweaking the surface and only data_CS.csv
+    # updates. An auto (no-override) run rewrites data.csv as before.
+    if custom_desc:
+        out_csv = os.path.join(os.path.dirname(csv_path), "data_CS.csv")
+    else:
+        out_csv = csv_path
+    # analysis header + the SMOOTHED data rows (clean header + rows, so re-processing
+    # can't accumulate stale comment blocks) + the processed profile. Reconstructed
+    # from the parsed rows so the saved sht_rh_pct / sht_temp_c carry the smoothing.
     hdr = list(rows[0].keys()) if rows else []
     data_lines = [",".join(str(d.get(h, "")) for h in hdr) for d in rows]
-    with open(csv_path, "w", encoding="utf-8") as f:
+    with open(out_csv, "w", encoding="utf-8") as f:
         f.write("\n".join(head) + "\n")
         if hdr:
             f.write(",".join(hdr) + "\n")
         f.write("\n".join(data_lines) + "\n")
         f.write("\n".join(prof_lines) + "\n")
 
+    # surface point actually used (for the Analysis-tab surface card)
+    surface = {"p": round(sfc["p"], 1), "t": round(sfc["t"], 1),
+               "td": round(sfc["td"], 1),
+               "rh": (round(_rh_from_t_td(sfc["t"], sfc["td"]), 1)
+                      if _rh_from_t_td(sfc["t"], sfc["td"]) is not None else None),
+               "wd": (round(sfc["wd"]) if sfc.get("wd") is not None else None),
+               "ws_ms": (round(sfc["ws"] / 1.94384, 1) if sfc.get("ws") is not None else None),
+               "n": sfc.get("n"), "custom": custom_desc or None}
+
     return {"flight": STATE["name"], "levels": len(pts),
             "indices": idx, "note": sharppy_err,
-            "image": img_b64, "saved": {"png": png_path, "csv": csv_path}}
+            "surface": surface, "products": prods,
+            "image": img_b64, "saved": {"png": png_path, "csv": out_csv},
+            "custom_file": (os.path.basename(out_csv) if custom_desc else None)}
 
 if __name__ == "__main__":
     print("Sonde processor on http://localhost:8765   (flights saved under %s)" % BASE)

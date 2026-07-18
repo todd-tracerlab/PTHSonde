@@ -138,7 +138,17 @@
   #map{position:absolute;inset:0}
   #mapFallback{position:absolute;inset:0;width:100%;height:100%;display:none}
   .mapbar{position:absolute;top:10px;right:10px;z-index:500;display:flex;gap:6px}
-  .mapbar button{background:rgba(17,21,28,.9);backdrop-filter:blur(4px)}
+  /* Map-overlay buttons sit on a dark translucent chip in BOTH themes, so force a
+     light text + subtle light border (otherwise light-mode text is dark-on-dark and
+     unreadable). Keep the primary (Follow) button's orange fill so it stands out. */
+  .mapbar button{background:rgba(17,21,28,.9);backdrop-filter:blur(4px);
+    color:#e7edf4;border-color:rgba(255,255,255,.18)}
+  .mapbar button:hover{background:rgba(34,43,58,.95);border-color:rgba(255,255,255,.3)}
+  .mapbar button.primary{background:var(--accent);border-color:var(--accent);color:#04121f}
+  .mapbar button.primary:hover{background:var(--accent);filter:brightness(1.08)}
+  .mapbar select{background:rgba(17,21,28,.9);backdrop-filter:blur(4px);color:#e7edf4;
+    border:1px solid rgba(255,255,255,.18);border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer}
+  .mapbar select option{background:#11151c;color:#e7edf4}
   .leaflet-container{background:#0c1118;font-family:var(--sans)}
 
   /* ---- Combined Skew-T (left) + Plots (right) ---- */
@@ -255,6 +265,19 @@
   .pair-info .cell span{display:block;font-size:9.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.6px}
   .pair-info .cell b{font-family:var(--mono);font-size:15px}
   .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  /* ---- Open Past Flight list ---- */
+  .openlist{max-height:46vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+  .openrow{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;
+    border-bottom:1px solid var(--line);font-size:13px}
+  .openrow:last-child{border-bottom:none}
+  .openrow:hover{background:var(--panel)}
+  .openrow.sel{background:var(--accent);color:#04121f}
+  .openrow.sel .meta{color:#04121f}
+  .openrow .nm{flex:1;font-family:var(--mono);font-weight:600}
+  .openrow .meta{color:var(--txt3);font-size:11.5px;white-space:nowrap}
+  .openrow .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+    padding:1px 6px;border-radius:4px;background:var(--raised);color:var(--txt2)}
+  .openrow.sel .tag{background:rgba(0,0,0,.15);color:#04121f}
   .pairchip{display:none;align-items:center;gap:6px;padding:5px 11px;border-radius:6px;
     background:#11331f;border:1px solid #2e6b40;color:#a6ecbd;font-size:12px}
   .pairchip.on{display:inline-flex}
@@ -266,11 +289,48 @@
     min-height:340px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:6px}
   .aimg img{max-width:100%;max-height:82vh;width:auto;height:auto;object-fit:contain;display:none;cursor:zoom-in}
   .aimg img[src]{display:block}
-  .aidx{width:300px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
-  #idxTable{width:100%;border-collapse:collapse;font-size:12.5px}
-  #idxTable td{padding:4px 0;border-bottom:1px solid var(--line)}
-  #idxTable td:first-child{color:var(--txt2)}
-  #idxTable td:last-child{text-align:right;font-family:var(--mono);font-weight:600}
+  .aidx{width:332px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:13px 15px;max-height:82vh;overflow-y:auto}
+  /* ---- ops panel: surface card + custom-surface form ---- */
+  .ops-sec{margin-bottom:16px}
+  .ops-sec>h3{margin:0 0 8px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--txt3)}
+  .sfc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px}
+  .sfc-cell{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+  .sfc-cell .k{font-size:9.5px;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px}
+  .sfc-cell .v{font-family:var(--mono);font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+  .sfc-cell .v small{font-size:10px;color:var(--txt2);font-weight:500}
+  #sfcForm{display:none;margin-top:9px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  #sfcForm.open{display:block}
+  .sfc-frow{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .sfc-frow label{flex:1;color:var(--txt2);font-size:12px}
+  .sfc-frow input{width:86px;background:var(--panel);border:1px solid var(--line2);border-radius:6px;
+    color:var(--txt);padding:4px 7px;font-family:var(--mono);font-size:12.5px}
+  /* ---- ops panel: color-scale product bars ---- */
+  .ops-item{margin:10px 0}
+  .ops-item.na .ops-bar,.ops-item.na .ops-ticks{opacity:.22}
+  .ops-head{display:flex;align-items:baseline;gap:7px}
+  .ops-head .nm{color:var(--txt2);font-size:12px;flex:1;white-space:nowrap}
+  .ops-head .cat{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+  .ops-head .val{font-family:var(--mono);font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+  .ops-head .val small{font-size:10px;color:var(--txt3);font-weight:500}
+  .ops-bar{position:relative;height:8px;display:flex;margin-top:4px;border-radius:4px}
+  .ops-bar i{flex:1;height:100%;opacity:.75}
+  .ops-bar i:first-child{border-radius:4px 0 0 4px}
+  .ops-bar i:last-child{border-radius:0 4px 4px 0}
+  .ops-mark{position:absolute;top:-3px;width:2.5px;height:14px;border-radius:2px;
+    background:var(--txt);box-shadow:0 0 0 1.5px var(--panel)}
+  .ops-ticks{position:relative;height:13px;font-size:9.5px;color:var(--txt3);font-family:var(--mono)}
+  .ops-ticks span{position:absolute;transform:translateX(-50%)}
+  .ops-kv{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;padding:3.5px 0;border-bottom:1px dotted var(--line)}
+  .ops-kv .k{color:var(--txt2)}
+  .ops-kv .v{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums}
+  .ops-kv .v small{font-size:10px;color:var(--txt3);font-weight:500}
+  .ops-note{font-size:11px;color:var(--txt3);margin-top:4px;line-height:1.45}
+  .icing-layer{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;
+    padding:5px 8px;border-radius:6px;margin:4px 0;border:1px solid var(--line)}
+  .icing-layer b{font-size:10px;letter-spacing:.5px;padding:1px 6px;border-radius:4px;color:#fff}
+  .icing-layer.sev1 b{background:#3d7fd8}
+  .icing-layer.sev2 b{background:#8a5fd6}
   .empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--txt3);font-size:13px}
 
   /* ---- Flight Sim (dropdown panel over the Map tab) ---- */
@@ -463,7 +523,7 @@
       <div class="spacer"></div>
       <span id="recDot" class="recdot" title="recording state">●</span>
       <button id="stopFlightBtn" class="warnbtn" style="display:none">■ Stop Flight</button>
-      <button id="importBtn" style="border:none;color:var(--txt3)">Import Past Flight</button>
+      <button id="importBtn" style="border:none;color:var(--txt3)">Open Past Flight</button>
       <button id="clearBtn" style="border:none;color:var(--txt3)">Clear</button>
       <input id="importFile" type="file" accept=".csv,text/csv" style="display:none">
     </nav>
@@ -575,6 +635,11 @@
         <div id="map"></div>
         <canvas id="mapFallback"></canvas>
         <div class="mapbar">
+          <select id="basemapSel" title="Map background">
+            <option value="streets">Streets</option>
+            <option value="satellite">Satellite</option>
+            <option value="dark">Dark</option>
+          </select>
           <button id="simToggle">▾ Flight Sim</button>
           <button id="followBtn" class="primary">Follow</button>
         </div>
@@ -731,8 +796,34 @@
           <div class="aresult">
             <div class="aimg"><img id="skewtImg" alt="Run 'Process Flight' to generate the sounding."><div id="aimgEmpty" class="empty">No sounding processed yet.</div></div>
             <div class="aidx">
-              <h3 style="margin:0 0 8px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--txt3)">SHARPpy indices</h3>
-              <table id="idxTable"><tbody></tbody></table>
+              <div class="ops-sec">
+                <h3>Surface point used</h3>
+                <div class="sfc-grid">
+                  <div class="sfc-cell"><div class="k">Pressure</div><div class="v" id="sfcP">—</div></div>
+                  <div class="sfc-cell"><div class="k">Temperature</div><div class="v" id="sfcT">—</div></div>
+                  <div class="sfc-cell"><div class="k">Humidity</div><div class="v" id="sfcRH">—</div></div>
+                  <div class="sfc-cell"><div class="k">Wind dir / spd</div><div class="v" id="sfcWind">—</div></div>
+                </div>
+                <div id="sfcCustomNote" class="ops-note" style="display:none;color:var(--accent)"></div>
+                <div style="margin-top:8px;display:flex;gap:8px">
+                  <button id="sfcEditBtn">Set custom surface</button>
+                  <button id="sfcResetBtn" style="display:none">Reset to auto</button>
+                </div>
+                <div id="sfcForm">
+                  <div class="sfc-frow"><label>Start sounding at (hPa)</label><input id="ovP" type="number" step="0.1" placeholder="auto"></div>
+                  <div class="sfc-frow"><label>Surface temp (°C)</label><input id="ovT" type="number" step="0.1" placeholder="auto"></div>
+                  <div class="sfc-frow"><label>Surface RH (%)</label><input id="ovRH" type="number" step="1" min="1" max="100" placeholder="auto"></div>
+                  <div class="sfc-frow"><label>Wind speed (m/s)</label><input id="ovWS" type="number" step="0.1" min="0" placeholder="auto"></div>
+                  <div class="sfc-frow"><label>Wind dir (° from)</label><input id="ovWD" type="number" step="1" min="0" max="360" placeholder="auto"></div>
+                  <div style="display:flex;gap:8px;margin-top:8px">
+                    <button id="sfcApplyBtn" class="primary">Re-process with this surface</button>
+                  </div>
+                  <div class="ops-note">Blank fields keep the auto value. “Start sounding at” trims every level below that
+                    pressure and makes it the new surface — use it when the sonde heat-soaked on the pad or the launch
+                    point sits above the true surface.</div>
+                </div>
+              </div>
+              <div id="opsProducts"><div class="ops-note">Process a flight to see the severe-weather, moisture, fire-weather and icing products.</div></div>
             </div>
           </div>
         </div>
@@ -776,6 +867,20 @@
     <div class="modal-actions">
       <button id="pmIgnore">Not now</button>
       <button id="pmPair" class="primary">Pair &amp; Record</button>
+    </div>
+  </div>
+</div>
+
+<div id="openModal" class="modal" style="display:none">
+  <div class="modal-box" style="max-width:560px">
+    <h2>Open Past Flight</h2>
+    <div class="sub">Reopens a saved flight in its own folder — processing (and custom surface) writes back there, no new folder is created.</div>
+    <div id="openList" class="openlist"><div class="muted" style="padding:10px">Loading…</div></div>
+    <div class="modal-actions">
+      <button id="openImportExt">Import external CSV…</button>
+      <div class="spacer" style="flex:1"></div>
+      <button id="openCancel">Cancel</button>
+      <button id="openConfirm" class="primary" disabled>Open selected</button>
     </div>
   </div>
 </div>
@@ -1683,7 +1788,7 @@ function drawBarb(ctx,x,y,dirFrom,kt){
 // ============================================================================
 //  Map (Leaflet w/ canvas fallback)
 // ============================================================================
-let map=null,trackLine=null,posMarker=null,launchMarker=null,mapReady=false;
+let map=null,trackLine=null,trackCasing=null,posMarker=null,launchMarker=null,mapReady=false;
 let predAscentLine=null,predDescentLine=null,landingMarker=null,launchSelMarker=null,pickMode=false;
 let baseAscentLine=null,baseDescentLine=null,baseLandingMarker=null;   // frozen initial GFS-only prediction
 function isOnline(){ return navigator.onLine!==false; }
@@ -1711,17 +1816,63 @@ function initMap(){
   window.addEventListener("online",  ()=>{ toast("Back online — loading map tiles."); goOnline(); });
   window.addEventListener("offline", ()=>{ toast("Offline — showing the basic track map.",true); goOffline(); });
 }
+// Selectable basemaps. Satellite = Esri World Imagery + a place/boundary label
+// overlay ("satellite with cities"); Dark = Carto dark; Streets = OSM.
+let baseLayers=null, curBaseKey=null;
+function makeBaseLayers(){
+  baseLayers={
+    streets: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {maxZoom:19,attribution:'&copy; OpenStreetMap'}),
+    satellite: L.layerGroup([
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        {maxZoom:19,attribution:'Imagery &copy; Esri, Maxar, Earthstar Geographics'}),
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        {maxZoom:19,opacity:.9})
+    ]),
+    dark: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {maxZoom:20,subdomains:"abcd",attribution:'&copy; OpenStreetMap &copy; CARTO'})
+  };
+}
+// Track styling per basemap — a bold core over a contrasting casing (halo) so the
+// flight path stays legible on imagery, dark, and street tiles alike.
+const TRACK_STYLE={
+  streets:   {core:"#ff2d55", casing:"#ffffff"},   // red core, white halo on light streets
+  satellite: {core:"#ffd400", casing:"#101418"},   // bright amber, dark halo on imagery
+  dark:      {core:"#19e3ff", casing:"#04121f"}     // cyan core, deep halo on dark
+};
+function applyTrackStyle(key){
+  const s=TRACK_STYLE[key]||TRACK_STYLE.streets;
+  if(trackCasing) trackCasing.setStyle({color:s.casing});
+  if(trackLine)   trackLine.setStyle({color:s.core});
+}
+function setBasemap(key){
+  if(!map||!baseLayers||!baseLayers[key]) return;
+  if(curBaseKey && baseLayers[curBaseKey]) map.removeLayer(baseLayers[curBaseKey]);
+  baseLayers[key].addTo(map);
+  if(baseLayers[key].bringToBack) baseLayers[key].bringToBack();
+  curBaseKey=key;
+  applyTrackStyle(key);
+  if(trackCasing) trackCasing.bringToFront();
+  if(trackLine) trackLine.bringToFront();
+  const sel=$("basemapSel"); if(sel && sel.value!==key) sel.value=key;
+  try{ localStorage.setItem("pth_basemap",key); }catch(e){}
+}
 function buildLeafletMap(){
   if(map) return true; if(typeof L==="undefined") return false;
   map=L.map("map",{zoomControl:true,attributionControl:true,preferCanvas:true}).setView([39.5,-98.35],4);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-  trackLine=L.polyline([],{color:"#4a9eff",weight:3,opacity:.9}).addTo(map);
+  makeBaseLayers();
+  // Flight track: thick casing (halo) UNDER a bold bright core — drawn as two
+  // polylines so it reads over any basemap. Round joins/caps keep it clean.
+  trackCasing=L.polyline([],{color:"#04121f",weight:8,opacity:.9,lineJoin:"round",lineCap:"round"}).addTo(map);
+  trackLine  =L.polyline([],{color:"#19e3ff",weight:4.5,opacity:1,lineJoin:"round",lineCap:"round"}).addTo(map);
   baseAscentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
   baseDescentLine=L.polyline([],{color:"#7c8aa0",weight:1.5,opacity:.5,dashArray:"3,7"}).addTo(map);
   predAscentLine=L.polyline([],{color:"#22d3ee",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
   predDescentLine=L.polyline([],{color:"#f5a623",weight:2,opacity:.85,dashArray:"5,5"}).addTo(map);
   map.on("click",e=>{ if(!pickMode)return; setLaunch(e.latlng.lat,e.latlng.lng); setPickMode(false); });
+  let saved="streets"; try{ saved=localStorage.getItem("pth_basemap")||"satellite"; }catch(e){ saved="satellite"; }
+  if(!TRACK_STYLE[saved]) saved="satellite";
+  setBasemap(saved);
   return true;
 }
 // Online: real Leaflet/OSM tile map (loads Leaflet first if we booted offline).
@@ -1746,12 +1897,17 @@ function updateMap(){
   map.invalidateSize();
   const pts=data.filter(r=>r.lat!=null&&r.lon!=null&&(r.lat!==0||r.lon!==0)).map(r=>[r.lat,r.lon]);
   if(!pts.length) return;
+  if(trackCasing) trackCasing.setLatLngs(pts);
   trackLine.setLatLngs(pts);
+  if(trackCasing) trackCasing.bringToFront();
+  trackLine.bringToFront();
   const last=pts[pts.length-1];
   if(!posMarker){ posMarker=L.circleMarker(last,{radius:6,color:"#fff",weight:2,fillColor:"#f0556b",fillOpacity:1}).addTo(map); }
   else posMarker.setLatLng(last);
   posMarker.bindTooltip("alt "+fmt(latest().alt,0)+" m",{direction:"top",offset:[0,-6]});
   if(!launchMarker){ launchMarker=L.circleMarker(pts[0],{radius:5,color:"#fff",weight:2,fillColor:"#46c46a",fillOpacity:1}).addTo(map).bindTooltip("launch"); }
+  if(posMarker) posMarker.bringToFront();
+  if(launchMarker) launchMarker.bringToFront();
   if(followMap) map.setView(last);
 }
 function drawTrackFallback(){
@@ -1775,9 +1931,13 @@ function drawTrackFallback(){
   for(let lat=Math.ceil(cc/sLat)*sLat; lat<=d; lat+=sLat){ const yy=Y(lat);
     ctx.beginPath();ctx.moveTo(36,yy);ctx.lineTo(w-6,yy);ctx.stroke();
     ctx.textAlign="left";ctx.fillText(lat.toFixed(2)+"°",3,yy+3); }
-  // track + launch/current markers
-  ctx.strokeStyle="#4a9eff";ctx.lineWidth=2;ctx.lineJoin="round";ctx.beginPath();
-  pts.forEach((p,k)=>{const xx=X(p[0]),yy=Y(p[1]);k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();
+  // track + launch/current markers — dark casing under a bold bright core so it
+  // reads on either theme.
+  ctx.lineJoin="round";ctx.lineCap="round";
+  const drawTrack=(col,wd)=>{ ctx.strokeStyle=col;ctx.lineWidth=wd;ctx.beginPath();
+    pts.forEach((p,k)=>{const xx=X(p[0]),yy=Y(p[1]);k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke(); };
+  drawTrack("rgba(4,18,31,.9)",5);      // casing
+  drawTrack("#19e3ff",2.6);             // bright core
   const L2=pts[pts.length-1];ctx.fillStyle="#f0556b";ctx.beginPath();ctx.arc(X(L2[0]),Y(L2[1]),4,0,7);ctx.fill();
   ctx.fillStyle="#46c46a";ctx.beginPath();ctx.arc(X(pts[0][0]),Y(pts[0][1]),3,0,7);ctx.fill();
   ctx.fillStyle=TH.lbl2;ctx.textAlign="right";ctx.fillText("offline — basic track map (no tiles)",w-8,14);
@@ -1939,7 +2099,51 @@ function importFlightCsv(text,name){
   $("flightStatus").innerHTML='Imported <b>'+(name||'flight')+'</b> — '+rows+' rows. Click <b>Process Flight</b> below to render the SHARPpy panel.';
   log("Imported "+rows+" rows from "+(name||"CSV")+".");
 }
-$("importBtn").onclick=()=>$("importFile").click();
+// ---- Open Past Flight: browse saved flights and reopen one IN PLACE ----
+let openSel=null;
+$("importBtn").onclick=openFlightBrowser;
+async function openFlightBrowser(){
+  if(flightActive){ log("End the live flight before opening a past one.",true); return; }
+  openSel=null; $("openConfirm").disabled=true;
+  $("openList").innerHTML='<div class="muted" style="padding:10px">Loading…</div>';
+  $("openModal").style.display="flex";
+  try{
+    const j=await (await fetch(PROC+"/flight/list")).json();
+    const fl=j.flights||[];
+    if(!fl.length){ $("openList").innerHTML='<div class="muted" style="padding:12px">No saved flights in '+(j.root||"the flights folder")+'.</div>'; return; }
+    $("openList").innerHTML=fl.map(f=>{
+      const tag = f.custom ? '<span class="tag">custom</span>' : (f.processed ? '<span class="tag">processed</span>' : '');
+      return '<div class="openrow" data-name="'+f.name.replace(/"/g,'&quot;')+'">'
+        +'<span class="nm">'+f.name+'</span>'+tag
+        +'<span class="meta">'+f.rows+' rows</span></div>';
+    }).join("");
+    $("openList").querySelectorAll(".openrow").forEach(row=>{
+      row.onclick=()=>{ $("openList").querySelectorAll(".openrow").forEach(r=>r.classList.remove("sel"));
+        row.classList.add("sel"); openSel=row.dataset.name; $("openConfirm").disabled=false; };
+      row.ondblclick=()=>{ openSel=row.dataset.name; doOpenSelected(); };
+    });
+  }catch(e){ $("openList").innerHTML='<div class="muted" style="padding:12px">Processor not reachable.</div>'; }
+}
+$("openCancel").onclick=()=>$("openModal").style.display="none";
+$("openModal").onclick=e=>{ if(e.target.id==="openModal") $("openModal").style.display="none"; };
+$("openConfirm").onclick=doOpenSelected;
+async function doOpenSelected(){
+  if(!openSel) return;
+  const name=openSel;
+  $("openModal").style.display="none";
+  try{
+    const r=await fetch(PROC+"/flight/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    const j=await r.json();
+    if(j.error){ log("Open failed: "+j.error,true); return; }
+    importFlightCsv(j.csv, name);        // replay + render (sets flightName=null)
+    flightName=j.name;                   // BIND to the existing folder -> Process writes back here, no new folder
+    sfcOverrides=null;                   // fresh flight -> clear any custom surface
+    $("flightStatus").innerHTML='Opened <b>'+name+'</b> — click <b>Process Flight</b> to render. Output stays in this folder.';
+    log("Opened saved flight "+name+" (in place).");
+  }catch(e){ log("Open failed: "+e.message,true); }
+}
+// "Import external CSV" (arbitrary file) still available from inside the modal
+$("openImportExt").onclick=()=>{ $("openModal").style.display="none"; $("importFile").click(); };
 $("importFile").onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return;
   const rd=new FileReader();
   rd.onload=()=>{ try{ importFlightCsv(String(rd.result),f.name); }catch(err){ log("Import failed: "+err.message,true); } };
@@ -1952,6 +2156,7 @@ function setAnalysisEnabled(on){
 function setRecDot(){ const d=$("recDot"); if(!d) return;
   d.className = "recdot" + (flightActive ? " on" : (flightDone ? " done" : "")); }
 $("followBtn").onclick=()=>{ followMap=!followMap; $("followBtn").className=followMap?"primary":""; };
+$("basemapSel").onchange=e=>setBasemap(e.target.value);
 
 $("btnRxCh").onclick=()=>sendSerial("RXCH "+selCh());
 $("btnStage").onclick=()=>{ sendSerial("STAGE "+selCh()); $("stageStatus").textContent="command sent, waiting for sonde…"; };
@@ -2035,21 +2240,157 @@ async function processFlight(){
   $("flightStatus").textContent="Processing through SHARPpy…"; log("Processing flight…");
   try{
     const r=await fetch(PROC+"/flight/process",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({header:headerLine,rows:rawLines})});
+      body:JSON.stringify({header:headerLine,rows:rawLines,overrides:sfcOverrides})});
     const j=await r.json();
     if(j.error){ $("flightStatus").innerHTML='<span class="bad-txt">'+j.error+'</span>'; log("Process error: "+j.error,true); return; }
     $("skewtImg").src=j.image; $("aimgEmpty").style.display="none";
-    const idx=j.indices||{}, keys=Object.keys(idx);
-    $("idxTable").querySelector("tbody").innerHTML = keys.length
-      ? keys.map(k=>`<tr><td>${k}</td><td>${idx[k]==null?'NA':idx[k]}</td></tr>`).join("")
-      : '<tr><td colspan="2" class="muted">no indices (SHARPpy not installed)</td></tr>';
+    renderOpsPanel(j);
     flightActive=false; flightArmed=false; flightDone=true; setRecDot(); updateFlightUi();   // flight ended; saving stops until Clear
     setAnalysisEnabled(true); showTab("analysis");
-    $("flightStatus").innerHTML='Processed <b>'+j.flight+'</b> · '+j.levels+' levels · flight ended · indices written to data.csv'+(j.note?' · <span class="warn-txt">'+j.note+'</span>':'');
+    const savedTo = j.custom_file ? ('custom surface saved to <b>'+j.custom_file+'</b> (raw data.csv untouched)') : 'indices written to data.csv';
+    $("flightStatus").innerHTML='Processed <b>'+j.flight+'</b> · '+j.levels+' levels · flight ended · '+savedTo+(j.note?' · <span class="warn-txt">'+j.note+'</span>':'');
     log("Processed "+j.levels+" levels — flight ended."+(j.note?"  "+j.note:""));
   }catch(e){ $("flightStatus").innerHTML='<span class="bad-txt">Processor not reachable.</span>'; log("Process failed: "+e.message,true); }
 }
 $("processBtn").onclick=processFlight;
+
+// ---------- Analysis ops panel: surface point + operational product scales ----------
+// Thresholds follow SPC / NWS fire-weather / AWC operational guidance (SCP, STP,
+// SHIP composites; K-index & TT convection categories; Haines, Fosberg, ventilation
+// rate fire categories; RH/temperature airframe-icing envelope).
+let sfcOverrides=null, lastSurface=null;
+const OPS_C={na:"#5b6b7d",grn:"#3fb950",yel:"#d8a23a",org:"#ef8a22",red:"#f0556b",pur:"#b06bf0"};
+function opsBar(o){
+  // o = {name, val, unit, min, dec, segs:[{to, c, lab}]}  — equal-width segments,
+  // marker placed piecewise-linearly inside its segment. val==null renders dimmed.
+  const n=o.segs.length; let pos=null,cat=null,catC=null;
+  if(o.val!=null&&isFinite(o.val)){
+    let lo=o.min;
+    for(let i=0;i<n;i++){ const s=o.segs[i];
+      if(o.val<=s.to||i===n-1){ const f=Math.max(0,Math.min(1,(o.val-lo)/((s.to-lo)||1)));
+        pos=(i+f)/n*100; cat=s.lab; catC=s.c; break; }
+      lo=s.to; }
+  }
+  const tk=v=>Math.abs(v)>=1000?(v/1000)+"k":v;
+  const segs=o.segs.map(s=>'<i style="background:'+s.c+'"></i>').join("");
+  const ticks=o.segs.slice(0,-1).map((s,i)=>'<span style="left:'+((i+1)/n*100)+'%">'+tk(s.to)+'</span>').join("");
+  const val=o.val==null?"NA":(o.dec!=null?(+o.val).toFixed(o.dec):o.val);
+  return '<div class="ops-item'+(o.val==null?' na':'')+'">'
+    +'<div class="ops-head"><span class="nm">'+o.name+'</span>'
+    +(cat?'<span class="cat" style="color:'+catC+'">'+cat+'</span>':'')
+    +'<span class="val">'+val+(o.unit?'<small> '+o.unit+'</small>':'')+'</span></div>'
+    +'<div class="ops-bar">'+segs+(pos!=null?'<div class="ops-mark" style="left:'+pos+'%"></div>':'')+'</div>'
+    +'<div class="ops-ticks">'+ticks+'</div></div>';
+}
+function opsKv(k,v,unit){
+  return '<div class="ops-kv"><span class="k">'+k+'</span><span class="v">'
+    +(v==null?'NA':v)+(unit&&v!=null?'<small> '+unit+'</small>':'')+'</span></div>';
+}
+function renderOpsPanel(j){
+  const s=j.surface||{}, p=j.products||{}, idx=j.indices||{};
+  lastSurface=s;
+  $("sfcP").innerHTML  = s.p !=null? s.p +'<small> hPa</small>':'—';
+  $("sfcT").innerHTML  = s.t !=null? s.t +'<small> °C</small>' :'—';
+  $("sfcRH").innerHTML = s.rh!=null? s.rh+'<small> %</small>'  :'—';
+  $("sfcWind").innerHTML=(s.wd!=null?String(Math.round(s.wd)).padStart(3,"0")+'°':'——°')
+    +' / '+(s.ws_ms!=null? s.ws_ms+'<small> m/s</small>':'—');
+  const note=$("sfcCustomNote");
+  if(s.custom){ note.textContent="⚠ "+s.custom; note.style.display="block"; $("sfcResetBtn").style.display=""; }
+  else{ note.style.display="none"; $("sfcResetBtn").style.display=sfcOverrides?"":"none"; }
+  const C=OPS_C, h=[];
+
+  h.push('<div class="ops-sec"><h3>Severe weather</h3>');
+  h.push(opsBar({name:"Supercell Composite",val:p.scp,min:0,dec:1,segs:[
+    {to:1,c:C.na,lab:"non-supercell"},{to:4,c:C.yel,lab:"supercell possible"},
+    {to:10,c:C.org,lab:"supercell likely"},{to:20,c:C.red,lab:"extreme"}]}));
+  h.push(opsBar({name:"Sig Tornado (fixed)",val:p.stp,min:0,dec:1,segs:[
+    {to:0.5,c:C.na,lab:"low"},{to:1,c:C.yel,lab:"marginal"},
+    {to:3,c:C.org,lab:"tor possible"},{to:8,c:C.red,lab:"sig tor"}]}));
+  h.push(opsBar({name:"SHIP (hail)",val:p.ship,min:0,dec:1,segs:[
+    {to:0.5,c:C.na,lab:"low"},{to:1,c:C.yel,lab:"marginal"},
+    {to:2,c:C.org,lab:"large hail"},{to:4,c:C.red,lab:"sig hail ≥2″"}]}));
+  h.push(opsBar({name:"DCAPE",val:p.dcape,unit:"J/kg",min:0,segs:[
+    {to:500,c:C.na,lab:"weak"},{to:1000,c:C.yel,lab:"gusty downdrafts"},{to:1500,c:C.red,lab:"damaging winds"}]}));
+  h.push(opsBar({name:"MLCAPE",val:p.mlcape,unit:"J/kg",min:0,segs:[
+    {to:500,c:C.na,lab:"marginal"},{to:1500,c:C.yel,lab:"moderate"},
+    {to:2500,c:C.org,lab:"strong"},{to:4000,c:C.red,lab:"extreme"}]}));
+  h.push(opsBar({name:"MLCIN (cap)",val:p.mlcin!=null?Math.abs(p.mlcin):null,unit:"J/kg",min:0,segs:[
+    {to:25,c:C.grn,lab:"weak cap"},{to:75,c:C.yel,lab:"moderate cap"},{to:150,c:C.red,lab:"strong cap"}]}));
+  h.push('</div>');
+
+  h.push('<div class="ops-sec"><h3>Moisture &amp; deep convection</h3>');
+  h.push(opsBar({name:"Precip water",val:idx["Precip Water (mm)"],unit:"mm",min:0,segs:[
+    {to:13,c:C.na,lab:"very dry"},{to:25,c:C.yel,lab:"dry"},
+    {to:38,c:C.grn,lab:"moist"},{to:51,c:C.org,lab:"very moist"},{to:64,c:C.red,lab:"tropical"}]}));
+  h.push(opsBar({name:"K-index",val:idx["K-Index"],min:0,segs:[
+    {to:20,c:C.na,lab:"unlikely"},{to:25,c:C.yel,lab:"isolated"},
+    {to:30,c:C.org,lab:"scattered"},{to:35,c:C.red,lab:"numerous"},{to:45,c:C.pur,lab:"widespread"}]}));
+  h.push(opsBar({name:"Total Totals",val:idx["Total Totals"],min:30,segs:[
+    {to:44,c:C.na,lab:"unlikely"},{to:50,c:C.yel,lab:"t-storms"},
+    {to:55,c:C.org,lab:"severe possible"},{to:62,c:C.red,lab:"severe likely"}]}));
+  h.push(opsBar({name:"Lapse 700–500",val:p.lr75,unit:"°C/km",min:4,dec:1,segs:[
+    {to:5.5,c:C.na,lab:"stable"},{to:7,c:C.yel,lab:"conditional"},
+    {to:8.5,c:C.org,lab:"steep"},{to:10,c:C.red,lab:"very steep"}]}));
+  h.push(opsBar({name:"Lapse 0–3 km",val:p.lr03,unit:"°C/km",min:4,dec:1,segs:[
+    {to:6,c:C.na,lab:"stable"},{to:7.5,c:C.yel,lab:"mixed"},
+    {to:9,c:C.org,lab:"steep"},{to:10.5,c:C.red,lab:"superadiabatic"}]}));
+  h.push('</div>');
+
+  h.push('<div class="ops-sec"><h3>Fire weather</h3>');
+  h.push(opsBar({name:"Haines"+(p.haines_var?" ("+p.haines_var+")":""),val:p.haines,min:2,segs:[
+    {to:3,c:C.na,lab:"very low"},{to:4,c:C.grn,lab:"low"},
+    {to:5,c:C.yel,lab:"moderate"},{to:6,c:C.red,lab:"high plume risk"}]}));
+  h.push(opsBar({name:"Fosberg FWI",val:p.fosberg,min:0,segs:[
+    {to:30,c:C.na,lab:"low"},{to:50,c:C.yel,lab:"moderate"},
+    {to:70,c:C.org,lab:"significant"},{to:100,c:C.red,lab:"extreme"}]}));
+  h.push(opsBar({name:"Ventilation rate",val:p.vent,unit:"m²/s",min:0,segs:[
+    {to:1175,c:C.red,lab:"very poor"},{to:2350,c:C.org,lab:"poor"},
+    {to:4700,c:C.yel,lab:"marginal"},{to:9400,c:C.grn,lab:"fair"},{to:14000,c:C.grn,lab:"good"}]}));
+  h.push(opsKv("Mixing height",p.mix_m,"m AGL"));
+  h.push(opsKv("Transport wind",p.transport_ms,"m/s"));
+  h.push('<div class="ops-note">Ventilation = mixing height × transport wind — smoke &amp; plume dispersion.</div>');
+  h.push('</div>');
+
+  h.push('<div class="ops-sec"><h3>Icing &amp; freezing levels</h3>');
+  h.push(opsKv("Freezing level",p.fzl_m,"m AGL"));
+  h.push(opsKv("Wet-bulb zero",p.wbz_m,"m AGL"));
+  const ic=p.icing||[];
+  h.push(ic.length
+    ? ic.map(l=>'<div class="icing-layer sev'+l.sev+'"><b>'+(l.sev===2?'MDT':'LGT')+'</b>'
+        +l.base+'–'+l.top+' m AGL</div>').join("")
+    : '<div class="ops-note">No icing layers detected (looks for T 0…−20 °C with RH ≥ 70 %; RH ≥ 85 % → moderate).</div>');
+  if(p.wbz_m!=null) h.push('<div class="ops-note">WBZ 2100–2700 m AGL favors large hail reaching the ground.</div>');
+  h.push('</div>');
+
+  $("opsProducts").innerHTML=h.join("");
+}
+// -- custom-surface form wiring --------------------------------------------
+$("sfcEditBtn").onclick=()=>{
+  const f=$("sfcForm"), opening=!f.classList.contains("open");
+  f.classList.toggle("open");
+  $("sfcEditBtn").textContent=opening?"Hide custom surface":"Set custom surface";
+  if(opening&&lastSurface){    // prefill with the surface actually used
+    if(lastSurface.p !=null) $("ovP").placeholder=lastSurface.p;
+    if(lastSurface.t !=null) $("ovT").placeholder=lastSurface.t;
+    if(lastSurface.rh!=null) $("ovRH").placeholder=lastSurface.rh;
+    if(lastSurface.ws_ms!=null) $("ovWS").placeholder=lastSurface.ws_ms;
+    if(lastSurface.wd!=null) $("ovWD").placeholder=Math.round(lastSurface.wd);
+  }
+};
+$("sfcApplyBtn").onclick=()=>{
+  const num=id=>{ const v=$(id).value.trim(); return v===""?null:+v; };
+  const ov={start_p:num("ovP"),t:num("ovT"),rh:num("ovRH"),ws:num("ovWS"),wd:num("ovWD")};
+  if(Object.values(ov).every(v=>v==null)){ log("Custom surface: no fields set — nothing to apply.",true); return; }
+  sfcOverrides=ov;
+  log("Re-processing with custom surface…");
+  processFlight();
+};
+$("sfcResetBtn").onclick=()=>{
+  sfcOverrides=null;
+  ["ovP","ovT","ovRH","ovWS","ovWD"].forEach(id=>$(id).value="");
+  log("Custom surface cleared — re-processing with the auto surface.");
+  processFlight();
+};
 // In-app zoom/pan lightbox for the SHARPpy panel. (The old handler did
 // window.open(blob:) which WebView2 can't navigate to -> the Windows "can't open"
 // popup. A DOM overlay works inside the packaged app and lets you actually zoom.)
