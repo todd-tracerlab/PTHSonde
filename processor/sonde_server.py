@@ -47,7 +47,7 @@ BASE = RES                                                   # bundled-resource 
 
 # Default place to save flights: Documents\PTHSonde (created on demand).
 DEFAULT_SAVE = os.path.join(os.path.expanduser("~"), "Documents", "PTHSonde")
-STATE = {"flight_dir": None, "name": None, "save_dir": None}
+STATE = {"flight_dir": None, "name": None, "save_dir": None, "met_save_dir": None}
 
 # ---------------------------------------------------------------- CORS --------
 @app.after_request
@@ -204,6 +204,192 @@ def serial_send():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+# ============================================================ met station I/O ==
+# A SECOND, completely independent serial channel for the surface weather
+# station. Deliberately a separate dict/thread from SER: the met station is a
+# permanent installation that must never disturb -- or be disturbed by -- the
+# sonde link during a flight. Either can open, close, or fail on its own.
+#
+# Unlike the sonde path, the server writes met lines straight to disk as they
+# arrive rather than waiting for the dashboard to hand them back. A surface
+# station runs for days; round-tripping every line through the browser would
+# lose data whenever the window is closed, reloaded, or asleep.
+MET_DEFAULT_SAVE = os.path.join(os.path.expanduser("~"), "Documents", "PTHSonde_Met")
+
+MET = {
+    "ser": None, "port": None, "baud": 115200,
+    "thread": None, "want_open": False, "connected": False,
+    "last_rx": 0.0, "error": None,
+    "buf": collections.deque(maxlen=20000),   # ~5.5 h at 1 Hz
+    "total": 0,
+    "lock": threading.Lock(),
+    "file": None, "path": None, "dir": None, "written": 0,
+}
+
+
+def _met_open_log():
+    """Create Documents\\PTHSonde_Met\\met_<UTC>\\met_<UTC>.csv and open it."""
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    root = STATE.get("met_save_dir") or MET_DEFAULT_SAVE
+    d = os.path.join(root, "met_" + stamp)
+    try:
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "met_%s.csv" % stamp)
+        f = open(path, "a", encoding="utf-8", newline="")
+        MET["file"], MET["path"], MET["dir"], MET["written"] = f, path, d, 0
+        f.write("# PTHSonde met station log started %s\n"
+                % datetime.datetime.now(datetime.timezone.utc).isoformat())
+        f.flush()
+        return True
+    except OSError as e:
+        MET["error"] = "log: %s" % e
+        MET["file"] = MET["path"] = MET["dir"] = None
+        return False
+
+
+def _met_close_log():
+    f = MET.get("file")
+    if f:
+        try:
+            f.flush(); f.close()
+        except Exception:
+            pass
+    MET["file"] = None
+
+
+def _met_reader():
+    partial = b""
+    while MET["want_open"]:
+        ser = MET["ser"]
+        if ser is None:
+            try:
+                ser = _pyserial.Serial(MET["port"], MET["baud"], timeout=0.3)
+                MET["ser"] = ser; MET["connected"] = True; MET["error"] = None
+                partial = b""
+            except Exception as e:
+                MET["connected"] = False; MET["error"] = str(e)
+                time.sleep(1.0); continue
+        try:
+            chunk = ser.read(256)
+            if chunk:
+                partial += chunk
+                while b"\n" in partial:
+                    raw, partial = partial.split(b"\n", 1)
+                    line = raw.decode("utf-8", "replace").rstrip("\r")
+                    if not line:
+                        continue
+                    with MET["lock"]:
+                        MET["buf"].append(line)
+                        MET["total"] += 1
+                        MET["last_rx"] = time.time()
+                        f = MET.get("file")
+                        if f:
+                            try:
+                                f.write(line + "\n")
+                                MET["written"] += 1
+                                # Flush every 10 rows: a surface station is
+                                # usually unattended, so an abrupt power cut
+                                # must cost seconds of data, not hours.
+                                if MET["written"] % 10 == 0:
+                                    f.flush()
+                            except Exception as e:
+                                MET["error"] = "write: %s" % e
+        except Exception as e:
+            MET["error"] = str(e); MET["connected"] = False
+            try: ser.close()
+            except Exception: pass
+            MET["ser"] = None; time.sleep(0.5)
+    try:
+        if MET["ser"]: MET["ser"].close()
+    except Exception: pass
+    MET["ser"] = None; MET["connected"] = False
+
+
+def _met_stop():
+    MET["want_open"] = False
+    t = MET.get("thread")
+    if t and t.is_alive():
+        t.join(timeout=2.5)
+    MET["thread"] = None; MET["connected"] = False
+    _met_close_log()
+
+
+def _met_start(port, baud):
+    _met_stop()
+    MET["port"] = port; MET["baud"] = int(baud); MET["want_open"] = True
+    _met_open_log()
+    t = threading.Thread(target=_met_reader, daemon=True)
+    MET["thread"] = t; t.start()
+
+
+@app.route("/met/open", methods=["POST", "OPTIONS"])
+def met_open():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if not _pyserial:
+        return jsonify({"error": "pyserial not installed"}), 500
+    body = request.get_json(force=True, silent=True) or {}
+    port = (body.get("port") or "").strip()
+    baud = int(body.get("baud") or 115200)
+    if not port:
+        return jsonify({"error": "no port given"}), 400
+    if port == SER.get("port") and SER.get("connected"):
+        return jsonify({"error": "that port is already in use by the sonde link"}), 400
+    _met_start(port, baud)
+    time.sleep(0.5)
+    return jsonify({"ok": True, "connected": MET["connected"], "error": MET["error"],
+                    "port": port, "path": MET["path"], "dir": MET["dir"]})
+
+
+@app.route("/met/close", methods=["POST", "OPTIONS"])
+def met_close():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    _met_stop()
+    return jsonify({"ok": True})
+
+
+@app.route("/met/poll")
+def met_poll():
+    since = request.args.get("since", default=None, type=int)
+    with MET["lock"]:
+        total = MET["total"]
+        buf = list(MET["buf"])
+        if since is None or since < 0:
+            since = total
+        have_from = total - len(buf)
+        start = since - have_from
+        if start < 0:
+            start = 0
+        lines = buf[start:] if start < len(buf) else []
+        out = {"lines": lines, "next": total, "connected": MET["connected"],
+               "port": MET["port"], "error": MET["error"],
+               "path": MET["path"], "dir": MET["dir"], "written": MET["written"],
+               "last_age": (time.time() - MET["last_rx"]) if MET["last_rx"] else None}
+    return jsonify(out)
+
+
+@app.route("/met/config", methods=["GET", "POST", "OPTIONS"])
+def met_config():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if request.method == "GET":
+        return jsonify({"ok": True, "save_dir": STATE.get("met_save_dir"),
+                        "default": MET_DEFAULT_SAVE,
+                        "effective": STATE.get("met_save_dir") or MET_DEFAULT_SAVE})
+    body = request.get_json(force=True, silent=True) or {}
+    sd = (body.get("save_dir") or "").strip()
+    if sd:
+        try:
+            os.makedirs(sd, exist_ok=True)
+        except OSError as e:
+            return jsonify({"error": str(e)}), 400
+        STATE["met_save_dir"] = sd
+    else:
+        STATE["met_save_dir"] = None
+    return jsonify({"ok": True, "save_dir": STATE.get("met_save_dir")})
+
 
 # ============================================================= static (HTML) ==
 @app.route("/")

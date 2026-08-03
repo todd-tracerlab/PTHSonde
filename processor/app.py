@@ -39,10 +39,11 @@ def main():
                                 width=1500, height=950, min_size=(1100, 700))
 
     def _on_closing():
-        try:
-            sonde_server._serial_stop()
-        except Exception:
-            pass
+        for stop in (sonde_server._serial_stop, sonde_server._met_stop):
+            try:
+                stop()          # close both links; met also flushes its log file
+            except Exception:
+                pass
 
     try:
         win.events.closing += _on_closing

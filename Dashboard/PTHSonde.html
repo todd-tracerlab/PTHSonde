@@ -189,6 +189,62 @@
   .seg button{padding:5px 14px;font-size:12px;background:var(--raised);border:none;color:var(--txt2);border-radius:0;cursor:pointer}
   .seg button.active{background:var(--accent);color:#04121f;font-weight:600}
   .rgrid .card,.hgrid .card{min-width:0;min-height:0}
+
+  /* ---- Surface met station tab ---- */
+  .metwrap{flex:1;display:flex;flex-direction:column;min-height:0;gap:9px;padding:11px 12px;
+    overflow-y:auto;overflow-x:hidden}
+  .metbar{display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .metfile{flex:none;font-size:11px;color:var(--txt3);padding:0 2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* current-conditions band: wind rose on the left, KPI tiles + chips beside it */
+  /* The rose sets the row height, so the KPI tiles stretch to match it. Their
+     content is centred and the type scales with viewport height instead of
+     sitting at a fixed size — otherwise a tall window leaves each tile mostly
+     empty with the text pinned to the top-left corner. */
+  .mettop{flex:none;display:grid;grid-template-columns:clamp(190px,15vw,250px) 1fr;
+    gap:10px;align-items:stretch;min-height:clamp(158px,20vh,232px)}
+  .metrose{min-width:0}
+  .metrose .body{padding:2px}
+  .metrose canvas{width:100%;height:100%;display:block}
+  .metright{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+  .metkpis{flex:1;display:grid;grid-template-columns:repeat(4,1fr);
+    grid-template-rows:1fr 1fr;gap:8px;min-height:0}
+  .mkpi{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    padding:5px clamp(9px,0.85vw,16px);min-width:0;min-height:0;
+    display:flex;flex-direction:column;justify-content:center;gap:1px}
+  .mkpi .l{font-size:clamp(8.5px,1.05vh,10.5px);color:var(--txt3);text-transform:uppercase;
+    letter-spacing:.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mkpi .v{font-size:clamp(15px,2.5vh,28px);font-weight:600;font-family:var(--mono);
+    font-variant-numeric:tabular-nums;line-height:1.12;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  /* em-relative so the unit tracks the value as it scales */
+  .mkpi .v small{font-size:.5em;color:var(--txt2);font-weight:400;margin-left:.15em}
+  .metgrid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(3,1fr);
+    gap:10px;min-width:0;min-height:0}
+  /* A floor per card, not per grid: with 1fr rows the grid grows to honour it, so
+     the layout works at 2 rows (wide) and 3 rows (normal) without separate rules.
+     Below this a plot is unreadable — the value labels collapse into each other —
+     so the wrapper scrolls instead of squashing them. */
+  .metgrid .card{min-width:0;min-height:136px}
+  /* Wide monitor: 3x2 keeps each plot closer to square. At 2 columns a 1920px
+     window stretches every plot to ~830px wide and 150px tall, which is mostly
+     empty canvas. */
+  @media (min-width:1560px){
+    .metgrid{grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr)}
+  }
+  /* Short window: the top band would eat the plots, so shrink it and let the
+     tiles go single-line. */
+  @media (max-height:760px){
+    .mettop{min-height:132px}
+    .metkpis{gap:6px}
+  }
+  /* Narrow: rose above the tiles rather than a squeezed side-by-side. */
+  @media (max-width:1000px){
+    .mettop{grid-template-columns:1fr;min-height:0}
+    .metrose{height:210px}
+    .metkpis{grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,1fr)}
+  }
+  @media (max-width:640px){ .metkpis{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(4,1fr)} }
   .rview[hidden]{display:none}
   .mapview{flex:1;position:relative;min-width:0;min-height:0;border-radius:10px;overflow:hidden}
 
@@ -446,6 +502,10 @@
       <div class="seg" id="followSeg"><button data-follow="1" class="active">On</button><button data-follow="0">Off</button></div></div>
     <div class="setrow"><label>Power-user tools</label>
       <div class="seg" id="powerSeg"><button data-power="1">On</button><button data-power="0" class="active">Off</button></div></div>
+    <div class="setrow"><label>Surface met station <small style="color:var(--txt3)">(adds a tab)</small></label>
+      <div class="seg" id="metSeg"><button data-met="1">On</button><button data-met="0" class="active">Off</button></div></div>
+    <div class="setrow" id="metSaveRow" style="display:none"><label>Save met logs to</label>
+      <input id="setMetDir" class="fld mono" style="flex:1;max-width:230px;padding:6px 9px" placeholder="Documents\PTHSonde_Met"></div>
     <div class="setrow"><label>Radio &amp; channel setup</label>
       <button id="openRadioBtn">Open Radio Setup…</button></div>
     <div class="modalbtns" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
@@ -520,6 +580,7 @@
       <button data-tab="fillcalc">Fill Calculator</button>
       <button data-tab="analysis">Analysis</button>
       <button data-tab="log">Console</button>
+      <button data-tab="met" id="metTabBtn" style="display:none">Met Station</button>
       <div class="spacer"></div>
       <span id="recDot" class="recdot" title="recording state">●</span>
       <button id="stopFlightBtn" class="warnbtn" style="display:none">■ Stop Flight</button>
@@ -840,6 +901,55 @@
           <div class="logsplit">
             <div class="logcol"><div class="logcolhdr">Messages</div><div id="log"></div></div>
             <div class="logcol"><div class="logcolhdr">Raw data in <span id="rawCount" class="muted"></span></div><div id="rawFeed" class="rawfeed"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SURFACE MET STATION -->
+      <section class="view" data-view="met">
+        <div class="metwrap">
+          <div class="metbar">
+            <span class="conn" id="metConn"><span class="dot"></span><span id="metConnTxt">Not connected</span></span>
+            <select id="metPort" class="fld" style="min-width:210px"></select>
+            <button id="metRefresh" class="iconbtn" title="Rescan ports">⟳</button>
+            <select id="metBaud" class="fld" style="width:104px">
+              <option>9600</option><option>19200</option><option>57600</option>
+              <option selected>115200</option><option>230400</option>
+            </select>
+            <button id="metConnect" class="primary">Connect</button>
+            <button id="metDisconnect" disabled>Disconnect</button>
+            <div class="spacer"></div>
+            <div class="seg" id="metTzSeg" title="Plot time axis">
+              <button data-tz="utc" class="active">UTC</button><button data-tz="local">Local</button>
+            </div>
+            <span id="metStats" class="muted mono" style="font-size:11px">0 rows</span>
+          </div>
+          <div class="metfile mono" id="metFile">Logging starts when you connect.</div>
+
+          <div class="mettop">
+            <div class="card metrose"><div class="head"><span class="t">Wind direction</span><span class="now" id="mnRose">--</span></div><div class="body"><canvas id="mpRose"></canvas></div></div>
+            <div class="metright">
+              <div class="metkpis" id="metKpis">
+                <div class="mkpi"><div class="l">Air temp</div><div class="v" id="mkT">--</div></div>
+                <div class="mkpi"><div class="l">Dewpoint</div><div class="v" id="mkD">--</div></div>
+                <div class="mkpi"><div class="l">Humidity</div><div class="v" id="mkH">--</div></div>
+                <div class="mkpi"><div class="l">Pressure</div><div class="v" id="mkP">--</div></div>
+                <div class="mkpi"><div class="l">Sustained</div><div class="v" id="mkW">--</div></div>
+                <div class="mkpi"><div class="l">Gust</div><div class="v" id="mkG">--</div></div>
+                <div class="mkpi"><div class="l">Direction</div><div class="v" id="mkDir">--</div></div>
+                <div class="mkpi"><div class="l">Satellites</div><div class="v" id="mkSat">--</div></div>
+              </div>
+              <div class="chips" id="metChips" style="padding:0 2px 2px"></div>
+            </div>
+          </div>
+
+          <div class="metgrid">
+            <div class="card"><div class="head"><span class="t">Temperature (thermistor) &amp; dewpoint (°C)</span><span class="now" id="mnT">--</span></div><div class="body"><canvas id="mpTemp"></canvas></div></div>
+            <div class="card"><div class="head"><span class="t">Wind — sustained &amp; gust (m/s)</span><span class="now" id="mnW">--</span></div><div class="body"><canvas id="mpWind"></canvas></div></div>
+            <div class="card"><div class="head"><span class="t">Relative humidity (%)</span><span class="now" id="mnH">--</span></div><div class="body"><canvas id="mpRH"></canvas></div></div>
+            <div class="card"><div class="head"><span class="t">Wind direction (°) — instant &amp; 1-min mean</span><span class="now" id="mnDir">--</span></div><div class="body"><canvas id="mpDir"></canvas></div></div>
+            <div class="card"><div class="head"><span class="t">Station pressure (hPa)</span><span class="now" id="mnP">--</span></div><div class="body"><canvas id="mpPress"></canvas></div></div>
+            <div class="card"><div class="head"><span class="t">Raw sensor voltages (V)</span><span class="now" id="mnV">--</span></div><div class="body"><canvas id="mpVolt"></canvas></div></div>
           </div>
         </div>
       </section>
@@ -1387,8 +1497,10 @@ function drawSeries(ctx,w,h,series,opts){
   opts=opts||{};
   const vert=!!opts.vert;
   const hasSec=opts.secondary&&!vert&&opts.secondary.pts&&opts.secondary.pts.length;
-  // tight margins -> maximise the data area; no enclosing frame
-  const padL=42,padR=hasSec?40:9,padT=8,padB=18;
+  // tight margins -> maximise the data area; no enclosing frame.
+  // opts.padL widens the value-label gutter for wide numbers (4-digit pressure
+  // in hPa overflows the 42 px default and gets its leading digit clipped).
+  const padL=opts.padL||42,padR=hasSec?40:9,padT=8,padB=18;
   const x0=padL,x1=w-padR,y0=padT,y1=h-padB;
   if(x1<=x0||y1<=y0) return;
   let amin=Infinity,amax=-Infinity,vmin=Infinity,vmax=-Infinity;
@@ -1426,6 +1538,22 @@ function drawSeries(ctx,w,h,series,opts){
     if(vert){ const yy=Ay(av); if(yy<y0-1||yy>y1+1)return; ctx.textAlign="right"; ctx.fillText(afmt(av),x0-5,yy+4); }
     else    { const xx=Ax(av); if(xx<x0-1||xx>x1+1)return; ctx.textAlign="center"; ctx.fillText(afmt(av),xx,y1+13); }
   });
+  // optional filled band between two envelopes — opts.band={lo,hi,color}.
+  // Drawn first so the lines sit on top of it. Horizontal mode only; lo/hi must
+  // share the same axis samples (build them from the same rows) or the polygon
+  // comes out ragged. The band's own points are NOT folded into the min/max, so
+  // pass the same series you are plotting.
+  if(!vert && opts.band && opts.band.lo && opts.band.hi &&
+     opts.band.lo.length && opts.band.hi.length){
+    const B=opts.band;
+    ctx.save(); ctx.beginPath(); ctx.rect(x0,y0-3,x1-x0,y1-y0+6); ctx.clip();
+    ctx.beginPath();
+    B.hi.forEach((p,k)=>{ const xx=Ax(p[0]),yy=Vy(p[1]); k?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy); });
+    for(let k=B.lo.length-1;k>=0;k--){ const p=B.lo[k]; ctx.lineTo(Ax(p[0]),Vy(p[1])); }
+    ctx.closePath();
+    ctx.fillStyle=B.color||"rgba(245,166,35,0.16)"; ctx.fill();
+    ctx.restore();
+  }
   // primary series (clipped, rounded joins)
   ctx.save(); ctx.beginPath(); ctx.rect(x0,y0-3,x1-x0,y1-y0+6); ctx.clip();
   series.forEach(s=>{ if(!s.pts.length)return;
@@ -1439,8 +1567,9 @@ function drawSeries(ctx,w,h,series,opts){
     }
   });
   ctx.restore();
-  // current-value dot at the end of each line series
-  series.forEach(s=>{ if(!s.pts.length||s.scatter)return;
+  // current-value dot at the end of each line series (s.noDot opts out — used
+  // where one logical line is split into several segments)
+  series.forEach(s=>{ if(!s.pts.length||s.scatter||s.noDot)return;
     const L=s.pts[s.pts.length-1], lx=vert?Vx(L[1]):Ax(L[0]), ly=vert?Ay(L[0]):Vy(L[1]);
     ctx.fillStyle=s.color;ctx.beginPath();ctx.arc(lx,ly,2.4,0,7);ctx.fill(); });
   // secondary right axis (line + light labels, no gridlines)
@@ -1986,6 +2115,8 @@ function showTab(t){
   document.querySelectorAll('nav button[data-tab]').forEach(b=>b.classList.toggle("active",b.dataset.tab===t));
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle("active",v.dataset.view===t));
   if(t==="map"&&mapReady) setTimeout(()=>map.invalidateSize(),60);
+  // Canvases sized 0x0 while hidden must be re-laid-out once the tab is visible.
+  if(t==="met"){ metRefreshPorts(); setTimeout(metRender,50); }
   requestRender();
 }
 
@@ -2858,6 +2989,350 @@ function applyPowerUser(on){ powerUser=!!on;
   try{ localStorage.setItem("pth_power",powerUser?"1":"0"); }catch(e){} }
 document.querySelectorAll('#powerSeg button').forEach(b=>b.onclick=()=>applyPowerUser(b.dataset.power==="1"));
 
+// ============================================================================
+//  Surface met station
+//  A second, independent serial link (own port, own server thread, own log
+//  file) so the surface station and the sonde receiver never interfere. The
+//  server writes every line to disk as it arrives, so the record survives this
+//  page being closed or reloaded — this loop only feeds the plots.
+//
+//  Time axis is WALL-CLOCK from this computer, not the station's own uptime:
+//  the station may be logging for days and its GPS clock may not have locked
+//  yet, but the PC always knows what time it is. UTC by default, with a Local
+//  toggle; both come from the same Date object, only the labels change.
+// ============================================================================
+let metOn=false, metPoll=false, metSince=null, metTz="utc";
+let metRows=[];                       // {t:Date-ms, v:{col->number}}
+let metCols=null, metLast=null, metFlags=null, metWritten=0;
+const MET_MAX=20000;                  // ~5.5 h at 1 Hz, then rolls
+
+const MET_DEFAULT_COLS=("utc_iso,unix_s,uptime_s,fix,sats,hdop,lat,lon,alt_m,"+
+  "air_temp_c,sht_temp_c,rh_pct,dewpoint_c,press_hpa,press_slp_hpa,baro_temp_c,"+
+  "wind_mps,wind_avg_mps,wind_gust_mps,wind_dir_deg,wind_spd_v,wind_dir_v,therm_v,flags").split(",");
+
+const MET_FLAGS=[
+  [0x0001,"GPS link"],[0x0002,"GPS fix"],[0x0004,"UTC clock"],[0x0008,"Holdover"],
+  [0x0010,"SHT41"],[0x0020,"MS5611"],[0x0040,"MCP3221"],[0x0080,"Thermistor"],
+  [0x0100,"Anemometer"],[0x0200,"Calm 6h+"],[0x0400,"Wind vane"],[0x0800,"Vane still"],
+  [0x1000,"Logger"],[0x2000,"I2C recovery"]];
+// Set means trouble, not health. The last two are informational only — calm
+// weather sets them, so flagging them as faults would cry wolf every still night.
+const MET_INV=new Set([0x0008,0x0200,0x0800,0x2000]);
+const MET_INFO=new Set([0x0200,0x0800]);
+
+function metApply(on){
+  metOn=!!on;
+  const b=$("metTabBtn"); if(b) b.style.display=metOn?"":"none";
+  const r=$("metSaveRow"); if(r) r.style.display=metOn?"":"none";
+  document.querySelectorAll('#metSeg button').forEach(x=>x.classList.toggle("active",(x.dataset.met==="1")===metOn));
+  try{ localStorage.setItem("pth_met",metOn?"1":"0"); }catch(e){}
+  if(!metOn && activeTab==="met") showTab("profile");
+}
+
+async function metRefreshPorts(){
+  try{
+    const j=await fetch(PROC+"/serial/ports").then(r=>r.json());
+    const sel=$("metPort"); if(!sel) return;
+    const cur=sel.value; sel.innerHTML="";
+    (j.ports||[]).forEach(p=>{ const o=document.createElement("option");
+      o.value=p.device; o.textContent=p.device+(p.desc?(" · "+p.desc):""); sel.appendChild(o); });
+    if(cur && [...sel.options].some(o=>o.value===cur)) sel.value=cur;
+  }catch(e){}
+}
+
+function metSetConn(on,txt){
+  const c=$("metConn"); if(c) c.classList.toggle("on",!!on);
+  if($("metConnTxt")) $("metConnTxt").textContent=txt;
+  if($("metConnect")) $("metConnect").disabled=!!on;
+  if($("metDisconnect")) $("metDisconnect").disabled=!on;
+}
+
+async function metConnect(){
+  const sel=$("metPort");
+  if(sel && !sel.options.length) await metRefreshPorts();
+  const port=sel?sel.value:"";
+  if(!port){ banner("No serial port found for the met station."); return; }
+  const baud=parseInt($("metBaud").value,10)||115200;
+  try{
+    const j=await fetch(PROC+"/met/open",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({port,baud})}).then(r=>r.json());
+    if(j.error){ banner("Met station: "+j.error); log("Met station: "+j.error,true); return; }
+    metPoll=true; metSince=null;
+    metSetConn(true,j.connected?("Connected · "+port):"Reconnecting…");
+    if(j.path) $("metFile").textContent="Logging to  "+j.path;
+    log("Met station opened "+port+" @ "+baud+".");
+    metLoop();
+  }catch(e){ log("Met connect failed — is the server running?  "+e.message,true); }
+}
+
+async function metDisconnect(){
+  metPoll=false;
+  try{ await fetch(PROC+"/met/close",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); }catch(e){}
+  metSetConn(false,"Not connected");
+  $("metFile").textContent="Log closed. Connecting again starts a new file.";
+  log("Met station closed.");
+}
+
+async function metLoop(){
+  while(metPoll){
+    try{
+      const j=await fetch(PROC+"/met/poll"+(metSince!=null?("?since="+metSince):"")).then(r=>r.json());
+      if(j){
+        if(typeof j.next==="number") metSince=j.next;
+        if(j.lines&&j.lines.length){ for(const ln of j.lines) metLine(ln); }
+        if(typeof j.written==="number") metWritten=j.written;
+        if(j.path) $("metFile").textContent="Logging to  "+j.path+"   ·   "+metWritten+" rows written";
+        metSetConn(true,j.connected?("Connected · "+(j.port||"")):"Reconnecting…");
+      }
+    }catch(e){ metSetConn(false,"Server offline"); }
+    if(activeTab==="met") metRender();
+    await new Promise(r=>setTimeout(r,700));
+  }
+}
+
+function metLine(line){
+  line=(line||"").trim(); if(!line) return;
+  if(line.startsWith("#")){
+    const m=line.match(/^#\s*columns=(.+)$/); if(m) metCols=m[1].split(",").map(s=>s.trim());
+    return;
+  }
+  if(/^utc_iso\s*,/.test(line)){ metCols=line.split(",").map(s=>s.trim()); return; }
+  const parts=line.split(","); if(parts.length<5) return;
+  const cols=metCols||MET_DEFAULT_COLS;
+  const v={}; let raw={};
+  cols.forEach((c,i)=>{ const s=(parts[i]!==undefined?parts[i].trim():""); raw[c]=s;
+    if(c==="flags"||c==="utc_iso") return;
+    const n=parseFloat(s); if(isFinite(n)) v[c]=n; });
+  metFlags = raw.flags ? parseInt(raw.flags,16) : null;
+  metLast = raw;
+  // Wall-clock stamp from THIS computer. The station's own utc_iso is blank
+  // until its GPS locks, so it can't carry the plots on its own.
+  metRows.push({t:Date.now(), v});
+  if(metRows.length>MET_MAX) metRows.shift();
+}
+
+const MET_PTS=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+function metCompassName(d){ return MET_PTS[Math.round((((d%360)+360)%360)/22.5)%16]; }
+
+// Wind rose — current direction as an arrow, with a fading trail of the last few
+// minutes so you can see whether the wind is steady or swinging around.
+function metRose(){
+  const c=$("mpRose"); if(!c) return;
+  const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+  const TH=plotTheme();
+  const cx=Math.round(w/2), cy=Math.round(h/2), R=Math.min(w,h)/2-16;
+  if(R<26){ return; }
+
+  ctx.strokeStyle=TH.grid; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,R*0.62,0,7); ctx.stroke();
+
+  for(let a=0;a<360;a+=15){
+    const major=(a%45===0), r2=R-(major?9:5), rad=(a-90)*Math.PI/180;
+    ctx.strokeStyle=major?TH.grid0:TH.grid; ctx.lineWidth=major?1.4:1;
+    ctx.beginPath();
+    ctx.moveTo(cx+R*Math.cos(rad),cy+R*Math.sin(rad));
+    ctx.lineTo(cx+r2*Math.cos(rad),cy+r2*Math.sin(rad));
+    ctx.stroke();
+  }
+  ctx.font="10px ui-monospace,monospace"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillStyle=TH.lbl;
+  ["N","NE","E","SE","S","SW","W","NW"].forEach((lbl,i)=>{
+    const rad=(i*45-90)*Math.PI/180, rr=R+9;
+    ctx.fillText(lbl,cx+rr*Math.cos(rad),cy+rr*Math.sin(rad));
+  });
+
+  const trail=[]; for(const r of metRows){ const d=r.v["wind_dir_deg"];
+    if(d!=null&&isFinite(d)) trail.push(d); }
+  const recent=trail.slice(-150);
+  recent.forEach((d,i)=>{
+    const rad=(d-90)*Math.PI/180, op=0.05+0.30*(i/Math.max(1,recent.length-1));
+    ctx.globalAlpha=op; ctx.fillStyle="#22d3ee";
+    ctx.beginPath(); ctx.arc(cx+R*0.86*Math.cos(rad),cy+R*0.86*Math.sin(rad),2,0,7); ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  const L=metLast||{};
+  const dir=parseFloat(L["wind_dir_deg"]);
+  const spd=parseFloat(L["wind_avg_mps"]);
+  const dirOk=isFinite(dir) && metFlags!=null && (metFlags&0x0400);
+  if(dirOk){
+    const rad=(dir-90)*Math.PI/180;
+    const tipR=R-13, tailR=R*0.60, headBack=14, hw=6.5;
+    const tx=cx+tipR*Math.cos(rad), ty=cy+tipR*Math.sin(rad);
+    const bx=cx+(tipR-headBack)*Math.cos(rad), by=cy+(tipR-headBack)*Math.sin(rad);
+    const px=-Math.sin(rad)*hw, py=Math.cos(rad)*hw;
+    const AC=getComputedStyle(document.body).getPropertyValue("--accent").trim()||"#ef8a22";
+    // Shaft stops outside the inner ring so it never crosses the readout.
+    ctx.strokeStyle=AC; ctx.lineWidth=3; ctx.lineCap="round";
+    ctx.beginPath();
+    ctx.moveTo(cx+tailR*Math.cos(rad),cy+tailR*Math.sin(rad)); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.fillStyle=AC; ctx.beginPath();
+    ctx.moveTo(tx,ty); ctx.lineTo(bx+px,by+py); ctx.lineTo(bx-px,by-py); ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle=TH.ink; ctx.textAlign="center"; ctx.textBaseline="alphabetic";
+    ctx.font="bold 26px ui-monospace,monospace";
+    ctx.fillText(Math.round(dir)+"°",cx,cy+3);
+    ctx.font="11px ui-monospace,monospace"; ctx.fillStyle=TH.lbl;
+    ctx.fillText(metCompassName(dir)+(isFinite(spd)?("  ·  "+spd.toFixed(1)+" m/s"):""),cx,cy+20);
+  } else {
+    ctx.fillStyle=TH.nodata; ctx.font="12px sans-serif";
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("no vane data",cx,cy);
+  }
+  if($("mnRose")) $("mnRose").textContent = dirOk ? (metCompassName(dir)+" "+Math.round(dir)+"°") : "--";
+}
+
+const MET_DIR_MEAN_SEC=60;      // rolling wind-direction mean window, seconds
+
+// Trailing circular mean of a [tSec, degrees] series.
+//
+// Direction MUST be averaged as vectors, never as plain numbers: the arithmetic
+// mean of 350 and 10 is 180 -- due south -- when the answer is due north. So we
+// accumulate sin/cos and take atan2 of the sums.
+//
+// Running sums with a sliding low index keep this O(n); recomputing the window
+// per point would be O(n*w) and this redraws every 700 ms over hours of rows.
+function metRollDir(pts,winSec){
+  const out=[]; let lo=0,su=0,sc=0;
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i][1]*Math.PI/180; su+=Math.sin(a); sc+=Math.cos(a);
+    while(lo<i && pts[lo][0] < pts[i][0]-winSec){
+      const b=pts[lo][1]*Math.PI/180; su-=Math.sin(b); sc-=Math.cos(b); lo++;
+    }
+    // Directly opposing samples cancel to a zero vector, where the mean is
+    // genuinely undefined -- fall back to the instantaneous value.
+    if(Math.abs(su)<1e-9&&Math.abs(sc)<1e-9){ out.push([pts[i][0],pts[i][1]]); continue; }
+    let d=Math.atan2(su,sc)*180/Math.PI; d=((d%360)+360)%360;
+    out.push([pts[i][0],d]);
+  }
+  return out;
+}
+
+// Break a wrapping series wherever it jumps more than maxJump, so the plotted
+// line does not draw a full-height streak across the wrap. Used for direction in
+// degrees (>180) and for the vane's raw voltage (>2.5 V), which makes the same
+// 5 V -> 0 V leap at every north crossing and otherwise reads as a glitch.
+function metSplitJump(pts,maxJump){
+  const segs=[]; let cur=[];
+  for(let i=0;i<pts.length;i++){
+    if(cur.length && Math.abs(pts[i][1]-cur[cur.length-1][1])>maxJump){ segs.push(cur); cur=[]; }
+    cur.push(pts[i]);
+  }
+  if(cur.length) segs.push(cur);
+  return segs;
+}
+// Same colour, end-dot only on the final segment: one logical line, drawn in bits.
+function metSegSeries(pts,maxJump,color,lw){
+  const segs=metSplitJump(pts,maxJump);
+  return segs.map((seg,i)=>({color,pts:seg,lw:lw||1.6,noDot:i<segs.length-1}));
+}
+
+// Axis label for a wall-clock ms value, in the selected zone.
+function metClock(ms){
+  const d=new Date(ms);
+  const p=n=>String(n).padStart(2,"0");
+  return metTz==="utc"
+    ? p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds())
+    : p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+
+function metRender(){
+  if(!metRows.length){
+    ["mpTemp","mpWind","mpRH","mpDir","mpPress","mpVolt"].forEach(id=>{
+      const c=$(id); if(!c) return; const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h); nodata(ctx,w,h); });
+    metRose();
+    return;
+  }
+  const t0=metRows[0].t, tN=metRows[metRows.length-1].t;
+  // Seconds since the first row keeps the numbers small for the tick maths;
+  // labels convert back to absolute wall-clock time.
+  const S=r=>(r.t-t0)/1000;
+  const opts={axisIsTime:true, axisMin:0, axisMax:Math.max(1,(tN-t0)/1000),
+              axisFmt:a=>metClock(t0+a*1000), fixed:1};
+  const ser=key=>{ const o=[]; for(const r of metRows){ const val=r.v[key];
+    if(val==null||!isFinite(val)) continue; o.push([S(r),val]); } return o; };
+  // Band needs both envelopes sampled at the SAME x values, so take only rows
+  // where both columns are present rather than two independently-filtered series.
+  const serPair=(ka,kb)=>{ const a=[],b=[]; for(const r of metRows){
+    const va=r.v[ka], vb=r.v[kb];
+    if(va==null||vb==null||!isFinite(va)||!isFinite(vb)) continue;
+    a.push([S(r),va]); b.push([S(r),vb]); } return {lo:a,hi:b}; };
+  const card=(id,series,nowId,nowTxt,extra)=>{ const c=$(id); if(!c) return;
+    const {ctx,w,h}=setup(c); ctx.clearRect(0,0,w,h);
+    drawSeries(ctx,w,h,series,Object.assign({},opts,extra||{}));
+    if(nowId&&$(nowId)) $(nowId).textContent=nowTxt; };
+
+  const L=metLast||{}, n=k=>{ const x=parseFloat(L[k]); return isFinite(x)?x:null; };
+
+  // air_temp_c is the bead thermistor (sht_temp_c is the SHT41's internal sensor);
+  // the thermistor hangs in the free airstream and settles in under 2 s.
+  card("mpTemp",[{color:"#ff6b6b",pts:ser("air_temp_c")},{color:"#46c46a",pts:ser("dewpoint_c")}],
+       "mnT", n("air_temp_c")!=null?fmt(n("air_temp_c"),1)+" °C":"--",
+       {legend:[{label:"air (therm)",color:"#ff6b6b"},{label:"dewpoint",color:"#46c46a"}]});
+  // Sustained = wind_avg_mps (the rolling 2-min mean, the met definition of
+  // "sustained"), not wind_mps (a single 1-s sample). That also guarantees
+  // gust >= sustained by construction, so the shaded band can never invert.
+  const wb=serPair("wind_avg_mps","wind_gust_mps");
+  card("mpWind",[{color:"#f5a623",pts:wb.lo},{color:"#ff8c42",pts:wb.hi}],
+       "mnW", n("wind_avg_mps")!=null?fmt(n("wind_avg_mps"),1)+" m/s":"--",
+       {band:{lo:wb.lo,hi:wb.hi,color:"rgba(245,166,35,0.17)"},
+        legend:[{label:"sustained",color:"#f5a623"},{label:"gust",color:"#ff8c42"}]});
+  card("mpRH",[{color:"#a78bfa",pts:ser("rh_pct")}], "mnH",
+       n("rh_pct")!=null?fmt(n("rh_pct"),0)+" %":"--", {fixed:0});
+  // Instantaneous direction is scattered, not joined: a line would draw a
+  // full-scale streak every time the vane crosses 360 -> 0. The rolling mean IS
+  // drawn as a line, but split into segments at each north crossing for the
+  // same reason, with the end dot suppressed on all but the final segment.
+  const dirPts=ser("wind_dir_deg");
+  const dirMean=metRollDir(dirPts,MET_DIR_MEAN_SEC);
+  const meanSeries=metSegSeries(dirMean,180,"#ef8a22",1.9);
+  const dirNow=dirMean.length?dirMean[dirMean.length-1][1]:null;
+  card("mpDir",[{color:"#22d3ee",pts:dirPts,scatter:true,r:1.4},...meanSeries], "mnDir",
+       dirNow!=null?(Math.round(dirNow)+"° mean"):"--",
+       {fixed:0,legend:[{label:"instant",color:"#22d3ee"},
+                        {label:(MET_DIR_MEAN_SEC/60)+"-min mean",color:"#ef8a22"}]});
+  card("mpPress",[{color:"#4a9eff",pts:ser("press_hpa")}],
+       "mnP", n("press_hpa")!=null?fmt(n("press_hpa"),2)+" hPa":"--", {fixed:2,padL:56});
+  card("mpVolt",[{color:"#caa24a",pts:ser("therm_v")},
+                 ...metSegSeries(ser("wind_dir_v"),2.5,"#46a0ff",1.6),
+                 {color:"#f5a623",pts:ser("wind_spd_v")}], "mnV",
+       n("therm_v")!=null?fmt(n("therm_v"),3)+" V":"--",
+       {fixed:2,legend:[{label:"therm",color:"#caa24a"},{label:"vane",color:"#46a0ff"},
+                        {label:"wind",color:"#f5a623"}]});
+
+  const set=(id,txt)=>{ const e=$(id); if(e) e.innerHTML=txt; };
+  const u=(v,d,unit)=>v==null?"--":fmt(v,d)+' <small>'+unit+'</small>';
+  set("mkT",u(n("air_temp_c"),1,"°C"));  set("mkD",u(n("dewpoint_c"),1,"°C"));
+  set("mkH",u(n("rh_pct"),1,"%"));       set("mkP",u(n("press_hpa"),2,"hPa"));
+  set("mkW",u(n("wind_avg_mps"),1,"m/s")); set("mkG",u(n("wind_gust_mps"),1,"m/s"));
+  set("mkDir",n("wind_dir_deg")!=null
+      ?(fmt(n("wind_dir_deg"),0)+'° <small>'+metCompassName(n("wind_dir_deg"))+'</small>'):"--");
+  set("mkSat",n("sats")!=null?String(Math.round(n("sats"))):"--");
+  if($("metStats")) $("metStats").textContent=metRows.length.toLocaleString()+" rows plotted";
+  metRose();
+
+  const host=$("metChips");
+  if(host){ host.innerHTML=MET_FLAGS.map(([bit,name])=>{
+      if(metFlags==null) return '<span class="chip"><span class="d"></span>'+name+'</span>';
+      const on=(metFlags&bit)!==0;
+      if(MET_INV.has(bit)) return '<span class="chip'+(on&&!MET_INFO.has(bit)?" no":"")+'"><span class="d"></span>'+name+'</span>';
+      return '<span class="chip'+(on?" ok":" no")+'"><span class="d"></span>'+name+'</span>';
+    }).join(""); }
+}
+
+document.querySelectorAll('#metSeg button').forEach(b=>b.onclick=()=>metApply(b.dataset.met==="1"));
+document.querySelectorAll('#metTzSeg button').forEach(b=>b.onclick=()=>{ metTz=b.dataset.tz;
+  document.querySelectorAll('#metTzSeg button').forEach(x=>x.classList.toggle("active",x===b));
+  try{ localStorage.setItem("pth_met_tz",metTz); }catch(e){} metRender(); });
+if($("metConnect"))    $("metConnect").onclick=metConnect;
+if($("metDisconnect")) $("metDisconnect").onclick=metDisconnect;
+if($("metRefresh"))    $("metRefresh").onclick=metRefreshPorts;
+if($("setMetDir"))     $("setMetDir").onchange=()=>{ const v=$("setMetDir").value.trim();
+  try{ localStorage.setItem("pth_metdir",v); }catch(e){}
+  fetch(PROC+"/met/config",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({save_dir:v})}).catch(()=>{}); };
+
 // ---- Radio Setup window (opened from Settings) ------------------------------
 $("openRadioBtn").onclick=()=>{ $("settingsModal").style.display="none"; $("radioModal").style.display="flex"; updateRadio(); };
 $("radioClose").onclick=()=>{ $("radioModal").style.display="none"; };
@@ -2881,6 +3356,13 @@ $("radioModal").onclick=e=>{ if(e.target===$("radioModal")) $("radioModal").styl
   try{ const sd=localStorage.getItem("pth_savedir")||""; if($("setSaveDir")) $("setSaveDir").value=sd; if(sd) postSaveDir(sd); }catch(e){}
   let pu=false; try{ pu=localStorage.getItem("pth_power")==="1"; }catch(e){}
   applyPowerUser(pu);
+  let mt=false; try{ mt=localStorage.getItem("pth_met")==="1"; }catch(e){}
+  metApply(mt);
+  try{ const mz=localStorage.getItem("pth_met_tz"); if(mz==="local"||mz==="utc"){ metTz=mz;
+    document.querySelectorAll('#metTzSeg button').forEach(x=>x.classList.toggle("active",x.dataset.tz===mz)); } }catch(e){}
+  try{ const md=localStorage.getItem("pth_metdir")||""; if($("setMetDir")) $("setMetDir").value=md;
+    if(md) fetch(PROC+"/met/config",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({save_dir:md})}).catch(()=>{}); }catch(e){}
   // learn the server's default save folder (Documents\PTHSonde) for the pairing popup
   fetch(PROC+"/config").then(r=>r.json()).then(j=>{ SAVE_DEFAULT=j.default||j.effective||""; }).catch(()=>{});
 })();
@@ -2890,6 +3372,8 @@ window.addEventListener("load",initMap);
 // periodically so a freshly-plugged receiver shows up without a reload.
 refreshPorts();
 setInterval(()=>{ if(!keepReading) refreshPorts(); },4000);
+setInterval(()=>{ if(metOn&&!metPoll&&activeTab==="met") metRefreshPorts(); },4000);
+window.addEventListener("resize",()=>{ if(activeTab==="met") metRender(); });
 setAnalysisEnabled(false); updateFlightUi();   // Analysis stays locked until a flight is stopped/imported
 log("Ready. Connect to the receiver's USB port. Pair the sonde when detected to start recording.");
 render();
